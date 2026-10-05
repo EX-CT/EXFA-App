@@ -1,0 +1,42 @@
+{
+ "Pyfa Rifter": {
+  "dps": 118.90697350292547,
+  "weapon_dps": 109.25447350292546,
+  "drone_dps": 9.652500000000002,
+  "ehp": 3270.3019206533554,
+  "max_velocity": 1494.658043608572,
+  "cpu_used": 146.5,
+  "power_used": 39.94,
+  "signature_radius": 35.0
+ },
+ "Pyfa Vexor": {
+  "dps": 137.023488,
+  "weapon_dps": 137.023488,
+  "drone_dps": 0,
+  "ehp": 12233.943967018957,
+  "max_velocity": 234.87204968944098,
+  "cpu_used": 367.8,
+  "power_used": 571.14,
+  "signature_radius": 145.0
+ },
+ "Pyfa Thanatos": {
+  "dps": 964.0933700607902,
+  "weapon_dps": 0,
+  "drone_dps": 964.0933700607902,
+  "ehp": 380176.94096566975,
+  "max_velocity": 100.0,
+  "cpu_used": 75.0,
+  "power_used": 90000.0,
+  "signature_radius": 9960.0
+ },
+ "Pyfa Svipul": {
+  "dps": 99.72084038919333,
+  "weapon_dps": 99.72084038919333,
+  "drone_dps": 0,
+  "ehp": 4799.505148056509,
+  "max_velocity": 495.7894736842105,
+  "cpu_used": 147.0,
+  "power_used": 30.0,
+  "signature_radius": 60.0
+ }
+}

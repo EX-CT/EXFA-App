@@ -1,0 +1,159 @@
+name: pages
+# Builds apps/web with the latest EX-CT/EXFA-Data dataset release and the EX-CT/EXFA-Engine WASM engines
+# (release downloads, no Rust builds), smoke-tests it in headless Chrome, runs the EXFA-Bench browser suites
+# against baselines/web.json, deploys to GitHub Pages.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      dataset_tag:
+        description: "EXFA-Data sde release tag (default: latest)"
+        required: false
+        default: ""
+      engine_tag:
+        description: "EXFA-Engine release tag (default: latest)"
+        required: false
+        default: ""
+      default_engine:
+        description: "default engine backend (wasm-worker | http); empty = repo variable DEFAULT_ENGINE or wasm-worker"
+        required: false
+        default: ""
+  schedule:
+    - cron: "40 */6 * * *"   # pick up new EXFA-Data / EXFA-Engine releases
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: apps/web
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # default engine backend of the site: dispatch input > repo variable DEFAULT_ENGINE > wasm-worker
+      DEFAULT_ENGINE: ${{ github.event.inputs.default_engine || vars.DEFAULT_ENGINE || 'wasm-worker' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22", cache: npm }
+      - run: npm ci
+        working-directory: .
+      - name: Dataset from the EXFA-Data sde release (latest = the Latest-marked sde-* tag)
+        run: |
+          TAG="${{ github.event.inputs.dataset_tag }}"
+          [ -z "$TAG" ] && TAG=$(gh release view -R EX-CT/EXFA-Data --json tagName --jq .tagName)
+          mkdir -p public/data dl
+          gh release download "$TAG" -R EX-CT/EXFA-Data -D dl -p 'dataset-*.json.gz' -p manifest.json -p LICENSE.EVE
+          cp dl/dataset-*.json.gz public/data/dataset.json.gz; cp dl/manifest.json public/data/manifest.json; cp dl/LICENSE.EVE public/data/
+          # SDE-derived presets (implant sets, NPC damage / target profiles; CCP data + MIT)
+          if gh release download "$TAG" -R EX-CT/EXFA-Data -D dl -p presets.json; then
+            node tools/slim-presets.mjs dl/presets.json public/data/presets-web.json | tee -a "$GITHUB_STEP_SUMMARY"
+          else echo "no presets.json in $TAG: implant sets / NPC profiles disabled" >> "$GITHUB_STEP_SUMMARY"; fi
+          echo "DATASET_TAG=$TAG" >> "$GITHUB_ENV"
+          echo "dataset: $TAG ($(ls dl/dataset-*))" >> "$GITHUB_STEP_SUMMARY"
+      - name: Latest market price snapshot (EXFA-Data prices-* release; served with the site for "update prices")
+        # /releases/latest is the sde dataset release, so list releases and take the newest tag starting with
+        # `prices-` (release assets are not CORS-readable from the browser; the site serves its own copy)
+        run: |
+          PTAG=$(gh release list -R EX-CT/EXFA-Data --json tagName --jq '[.[] | select(.tagName | startswith("prices-"))][0].tagName')
+          test -n "$PTAG" || { echo "no prices-* release in EX-CT/EXFA-Data"; exit 1; }
+          mkdir -p public/prices dlp
+          gh release download "$PTAG" -R EX-CT/EXFA-Data -D dlp -p 'prices-*.json.gz' -p SHA256SUMS
+          (cd dlp && sha256sum -c --ignore-missing SHA256SUMS)
+          cp dlp/prices-*.json.gz public/prices/latest.json.gz
+          echo "PRICES_SNAPSHOT=$PTAG" >> "$GITHUB_ENV"
+          echo "price snapshot: $PTAG" >> "$GITHUB_STEP_SUMMARY"
+      - name: Engine WASM + native binary from the EXFA-Engine release
+        # hard requirement: the wasm-worker backend (stats + graphs) and the formats module carry the site;
+        # a failed download fails the deploy
+        run: |
+          ETAG="${{ github.event.inputs.engine_tag }}"
+          [ -z "$ETAG" ] && ETAG=$(gh release view -R EX-CT/EXFA-Engine --json tagName --jq .tagName)
+          mkdir -p public/engines/f dle
+          gh release download "$ETAG" -R EX-CT/EXFA-Engine -D dle -p exfa-wasm32-wasip1.wasm -p exfa_formats_wasm.wasm -p "exfa-${ETAG}-linux-x86_64.tar.gz" -p SHA256SUMS
+          (cd dle && sha256sum -c --ignore-missing SHA256SUMS)
+          cp dle/exfa-wasm32-wasip1.wasm public/engines/f/exfa_wasm.wasm
+          cp dle/exfa_formats_wasm.wasm public/engines/f/exfa_formats_wasm.wasm
+          for w in exfa_wasm.wasm exfa_formats_wasm.wasm; do test -s "public/engines/f/$w" || { echo "engine module $w missing"; exit 1; }; done
+          # native exfa binary for the http-backend e2e (tools/engine-bridge.mjs); not deployed
+          tar xzf "dle/exfa-${ETAG}-linux-x86_64.tar.gz" -C dle
+          # the release ships LICENSE inside the per-platform tarballs, not as a standalone asset
+          cp "dle/exfa-${ETAG}-linux-x86_64/LICENSE" public/engines/f/ 2>/dev/null || true
+          EXFA_BIN=$(find dle -name exfa -type f | head -1); chmod +x "$EXFA_BIN"
+          cp "$EXFA_BIN" "$RUNNER_TEMP/exfa"
+          # bench suite scripts (cap/run_cap.py etc.) need pyyaml
+          pip install pyyaml
+          { echo "ENGINE_RELEASE=$ETAG"; echo "ENGINE_RELEASE_URL=${{ github.server_url }}/EX-CT/EXFA-Engine/releases/tag/$ETAG"; } >> "$GITHUB_ENV"
+          echo "engine: $ETAG" >> "$GITHUB_STEP_SUMMARY"
+      - name: Unit tests (vitest; formats layer against the release formats module)
+        run: npm test
+        env: { REQUIRE_FORMATS_WASM: "1" }
+      - name: Build info
+        run: |
+          for w in exfa_wasm.wasm exfa_formats_wasm.wasm; do test -s "public/engines/f/$w" || { echo "engine module $w is missing: not deploying" | tee -a "$GITHUB_STEP_SUMMARY"; exit 1; }; done
+          echo "VITE_DEFAULT_ENGINE=$DEFAULT_ENGINE" >> "$GITHUB_ENV"
+          printf '{"dataset_tag":"%s","engine_release":"%s","engine_release_url":"%s","web":"%s","built_at":"%s","run":"%s","default_engine":"%s","prices_snapshot":"%s"}\n' \
+            "$DATASET_TAG" "$ENGINE_RELEASE" "$ENGINE_RELEASE_URL" "${GITHUB_SHA::7}" "$(date -u +%FT%TZ)" \
+            "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" "$DEFAULT_ENGINE" "${PRICES_SNAPSHOT:-}" > public/build-info.json
+          cat public/build-info.json
+      - run: npm run build
+        env: { BASE: /EXFA-App/ }
+      - name: Smoke test (headless Chrome computes the demo fit)
+        run: |
+          set -o pipefail
+          npx vite preview --host 127.0.0.1 --port 4173 --strictPort &
+          for i in $(seq 1 30); do curl -sf -o /dev/null http://127.0.0.1:4173/EXFA-App/ && break; sleep 1; done
+          node tools/smoke.mjs http://127.0.0.1:4173/EXFA-App/ wasm-worker | tee -a "$GITHUB_STEP_SUMMARY"
+          # wasm-worker e2e always gates the deploy
+          node tools/e2e.mjs http://127.0.0.1:4173/EXFA-App/ wasm-worker | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ -x "$RUNNER_TEMP/exfa" ]; then
+            node tools/engine-bridge.mjs --stdio "$RUNNER_TEMP/exfa serve-stdio" --port 8787 &
+            for i in $(seq 1 30); do curl -sf -o /dev/null http://127.0.0.1:8787/healthz && break; sleep 1; done
+            node tools/e2e.mjs "http://127.0.0.1:4173/EXFA-App/?http=http://127.0.0.1:8787" http | tee -a "$GITHUB_STEP_SUMMARY" || echo "http backend e2e failed" >> "$GITHUB_STEP_SUMMARY"
+          fi
+        env: { CHROME: /usr/bin/google-chrome }
+      - name: Bench full suite set in the browser build (wasm-worker; tools/run_all_suites.sh + check_no_regress.py vs baselines/web.json gate the deploy; EXFA-Bench @ EXFA-Engine bench.lock)
+        # every suite of the bench's run_all_suites.sh, with tools/browser-engine.mjs as the engine binary
+        # (one headless Chrome via browser-rpc --http), scored by the bench's own runners; check_no_regress.py
+        # fails on any case that passes in baselines/web.json but not here
+        run: |
+          curl -sf https://raw.githubusercontent.com/EX-CT/EXFA-Engine/main/bench.lock | grep -E '^[A-Z0-9_]+=[^[:space:]#]+$' | tee bench.lock.env
+          . bench.lock.env
+          git clone -q "https://github.com/$BENCH_REPO" benchsuites && git -C benchsuites checkout -q "$BENCH_SHA"
+          npx vite preview --host 127.0.0.1 --port 4177 --strictPort &
+          for i in $(seq 1 30); do curl -sf -o /dev/null http://127.0.0.1:4177/EXFA-App/ && break; sleep 1; done
+          node tools/browser-rpc.mjs http://127.0.0.1:4177/EXFA-App/ wasm-worker --http 8899 &
+          for i in $(seq 1 60); do curl -s -o /dev/null -X POST --data '' http://127.0.0.1:8899/rpc && break; sleep 1; done
+          out="$RUNNER_TEMP/bench-suites-wasm-worker"
+          BROWSER_RPC=http://127.0.0.1:8899 bash benchsuites/tools/run_all_suites.sh "$GITHUB_WORKSPACE/apps/web/tools/browser-engine.mjs" "$out" browser-wasm-worker
+          echo '### Bench suites in the browser (wasm-worker)' >> "$GITHUB_STEP_SUMMARY"
+          python3 benchsuites/tools/check_no_regress.py --baseline benchsuites/baselines/web.json --run-dir "$out" 2>&1 | tee "$out/no-regress.txt" | tee -a "$GITHUB_STEP_SUMMARY"
+        shell: bash -eo pipefail {0}
+        env: { CHROME: /usr/bin/google-chrome }
+      - name: Upload bench suite results (per suite)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-suites-wasm-worker
+          path: |
+            ${{ runner.temp }}/bench-suites-wasm-worker
+            !${{ runner.temp }}/bench-suites-wasm-worker/suites/*/.git
+          if-no-files-found: warn
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: apps/web/dist }
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.d.outputs.page_url }}
+    steps:
+      - id: d
+        uses: actions/deploy-pages@v4

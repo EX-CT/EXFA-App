@@ -1,0 +1,23 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.sw?
+
+# Generated site data (downloaded by CI)
+apps/web/public/data/
+apps/web/public/engines/
+apps/web/public/build-info.json
+apps/web/public/prices/
+__pycache__/

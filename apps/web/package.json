@@ -1,0 +1,40 @@
+{
+  "name": "exfa-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "smoke": "node tools/smoke.mjs",
+    "e2e": "node tools/e2e.mjs",
+    "test": "vitest run",
+    "test:unit": "vitest run"
+  },
+  "dependencies": {
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "sql.js": "^1.14.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@types/sql.js": "^1.4.11",
+    "@vitejs/plugin-react": "^6.1.1",
+    "fake-indexeddb": "^6.2.5",
+    "oxlint": "^1.81.0",
+    "puppeteer-core": "^25.12.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.3.0",
+    "vitest": "^5.0.3"
+  },
+  "license": "LGPL-3.0-or-later",
+  "description": "EXFA Web: browser UI for EXFA (engine-agnostic fitting calculator)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/EX-CT/EXFA-App.git",
+    "directory": "apps/web"
+  }
+}

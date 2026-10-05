@@ -1,0 +1,104 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  web:
+    # apps/web: typecheck + vite build + vitest (formats WASM from the latest EXFA-Engine release)
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22", cache: npm }
+      - run: npm ci
+      - name: Formats WASM from the latest EXFA-Engine release
+        run: |
+          mkdir -p apps/web/public/engines/f
+          gh release download -R EX-CT/EXFA-Engine -D dl -p exfa_formats_wasm.wasm
+          cp dl/exfa_formats_wasm.wasm apps/web/public/engines/f/
+      - name: Lint (oxlint; warnings tolerated — migrated code carries pre-existing warnings, the old repo ran no lint gate)
+        run: npx oxlint -c .oxlintrc.json
+        working-directory: apps/web
+      - run: npm run build -w apps/web
+      - run: npm test -w apps/web
+        env: { REQUIRE_FORMATS_WASM: "1" }
+  mcp:
+    # packages/mcp: unit tests (engine/dataset-backed suites skip themselves without EXFA_ENGINE_BIN)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm test -w packages/mcp
+      - name: tool schemas are up to date
+        run: node dist/tools/dump-schemas.js && git diff --exit-code schemas
+        working-directory: packages/mcp
+  mcp-engine:
+    # MCP integration suites + mcp-bench against the latest EXFA-Engine release and EXFA-Data dataset.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22", cache: npm }
+      - name: Dataset from the latest EXFA-Data sde release
+        run: |
+          TAG=$(gh release view -R EX-CT/EXFA-Data --json tagName --jq .tagName)
+          gh release download "$TAG" -R EX-CT/EXFA-Data -D "$RUNNER_TEMP/data" -p 'dataset-*.json.gz'
+          echo "EXFA_DATASET=$(ls "$RUNNER_TEMP"/data/dataset-*.json.gz)" >> "$GITHUB_ENV"
+          echo "dataset: $TAG" >> "$GITHUB_STEP_SUMMARY"
+      - name: Pyfa presets (legacy oracle data for built-in profile cases; EXFA-Data no longer produces presets-pyfa, the last copy is the frozen legacy release)
+        run: |
+          gh release download sde-3569502-r5 -R EX-CT/eve-sde-pipeline -D "$RUNNER_TEMP/data" -p 'presets-pyfa-*'
+          echo "EXFA_PYFA_DATA=$(ls "$RUNNER_TEMP"/data/presets-pyfa-*.json | head -1)" >> "$GITHUB_ENV"
+      - name: Engine from the latest EXFA-Engine release
+        run: |
+          ETAG=$(gh release view -R EX-CT/EXFA-Engine --json tagName --jq .tagName)
+          gh release download "$ETAG" -R EX-CT/EXFA-Engine -D "$RUNNER_TEMP/engine" -p "exfa-${ETAG}-linux-x86_64.tar.gz"
+          tar xzf "$RUNNER_TEMP/engine/exfa-${ETAG}-linux-x86_64.tar.gz" -C "$RUNNER_TEMP/engine"
+          EXFA_BIN=$(find "$RUNNER_TEMP/engine" -name exfa -type f | head -1)
+          test -x "$EXFA_BIN" || chmod +x "$EXFA_BIN"
+          echo "EXFA_ENGINE_BIN=$EXFA_BIN" >> "$GITHUB_ENV"
+          echo "engine: $ETAG ($EXFA_BIN)" >> "$GITHUB_STEP_SUMMARY"
+      - run: npm ci
+      - name: npm test (unit + integration on exfa; engine suites must run, none may skip)
+        working-directory: packages/mcp
+        run: |
+          npm test 2>&1 | tee test.log
+          grep -qE '^(#|ℹ) fail 0' test.log
+          # engine/dataset-backed suites must run (the alternate-contract-engine checks may skip:
+          # EXFA has no second engine binary for them)
+          if grep -q 'engine or dataset missing' test.log; then echo "engine/dataset suites skipped"; exit 1; fi
+          if grep -q 'dataset without market_groups' test.log; then echo "dataset lacks market_groups"; exit 1; fi
+          if grep -q 'TODO engine without docs/23' test.log; then echo "release engine has docs/23 batch + prices: those checks must run"; exit 1; fi
+          grep -E '^(#|ℹ) (tests|pass|fail|skipped)' test.log >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Bench corpus through the MCP (tools/mcp-bench.py, suite mcp-bench; EXFA-Bench @ bench.lock in EXFA-Engine)
+        run: |
+          pip install -q pyyaml
+          curl -sf https://raw.githubusercontent.com/EX-CT/EXFA-Engine/main/bench.lock | grep -E '^[A-Z0-9_]+=[^[:space:]#]+$' | tee bench.lock.env
+          . bench.lock.env
+          git clone -q "https://github.com/$BENCH_REPO" "$RUNNER_TEMP/bench"
+          git -C "$RUNNER_TEMP/bench" checkout -q "$BENCH_SHA"
+          set -o pipefail
+          python3 tools/mcp-bench.py run --bench "$RUNNER_TEMP/bench" --suite core,ext,effects,cap --out mcp-bench.json | tee bench.log
+          { echo "mcp-bench ($BENCH_REPO@${BENCH_SHA:0:7}):"; grep -E '^mcp-bench' bench.log; } >> "$GITHUB_STEP_SUMMARY"
+        working-directory: packages/mcp
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mcp-bench-results
+          path: packages/mcp/mcp-bench.json
+          if-no-files-found: ignore

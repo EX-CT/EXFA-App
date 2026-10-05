@@ -1,0 +1,55 @@
+{
+  "name": "@ex-ct/exfa-mcp",
+  "version": "0.4.2",
+  "description": "Engine-agnostic MCP server for EVE Online ship fitting (search, validate, compute, compare, optimise) on top of any EXFA contract engine",
+  "scripts": {
+    "build": "tsc -p .",
+    "start": "node dist/main.js",
+    "start:http": "node dist/main.js --http",
+    "test": "npm run build && node --test --test-concurrency=1 dist/test/*.test.js",
+    "schemas": "npm run build && node dist/tools/dump-schemas.js",
+    "prepare": "tsc -p ."
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/EX-CT/EXFA-App.git",
+    "directory": "packages/mcp"
+  },
+  "keywords": [
+    "mcp",
+    "eve-online",
+    "dogma",
+    "fitting",
+    "pyfa"
+  ],
+  "author": "EX-CT",
+  "license": "LGPL-3.0-or-later",
+  "bugs": {
+    "url": "https://github.com/EX-CT/EXFA-App/issues"
+  },
+  "homepage": "https://github.com/EX-CT/EXFA-App#readme",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "typescript": "^7.0.2"
+  },
+  "type": "module",
+  "bin": {
+    "exfa-mcp": "dist/main.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "dist",
+    "!dist/test",
+    "schemas",
+    "docs",
+    "README.md",
+    "LICENSE"
+  ],
+  "main": "dist/main.js"
+}
