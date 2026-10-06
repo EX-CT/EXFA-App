@@ -60,7 +60,21 @@ export default function App() {
   const [fitted, setFitted] = useState<Record<string, number> | null | undefined>(undefined);
   const [fittedNote, setFittedNote] = useState<string | undefined>(undefined);
   const setInfo = (id: number | null, ctx?: InfoCtx) => setInfoState(id == null ? null : { id, ctx });
-  const info = infoState?.id ?? null;
+  const [locate, setLocate] = useState<{ id: number; n: number } | null>(null);
+  // Pyfa-parity: a click on a fitted/market item fills the info pane AND reveals it in the
+  // market tree (left column switches to Market, group expanded, row highlighted).
+  const locateType = (id: number, ctx?: InfoCtx) => { setInfo(id, ctx); setLeft('market'); setLocate({ id, n: Date.now() }); };
+  /** Swap the fitted module named by the info ctx to another variation (all group members). */
+  const swapInfoType = (v: number) => {
+    const ctx = infoState?.ctx;
+    if (!fit || ctx?.module == null) return;
+    const cur = fit.modules[ctx.module];
+    const members = cur?.group != null
+      ? new Set(fit.modules.map((m, i) => (m.group === cur.group ? i : -1)).filter((i) => i >= 0))
+      : new Set([ctx.module]);
+    setFit({ ...fit, modules: fit.modules.map((m, i) => (members.has(i) ? { ...m, type_id: v, mutation: null } : m)) });
+    setInfo(v, ctx);
+  };
   const [showIO, setShowIO] = useState(false);
   const [build, setBuild] = useState<BuildInfo | null>(null);
   const [graphBackend, setGraphBackend] = useState<string | null>(null);
@@ -274,19 +288,28 @@ export default function App() {
       <main>
         <aside className="left">
           <Tabs tabs={[['market', t('Market')], ['fits', `${t('Fits')} (${Object.keys(lib.fits).length})`], ['char', t('Character')], ['profiles', t('Profiles')], ['about', t('About')]]} value={left} onChange={setLeft} />
-          {left === 'market' && <Market ds={ds} engine={engineReady ? engineRef.current : null} onPick={pick} onInfo={setInfo} />}
+          <div className="leftbody">
+          {left === 'market' && <Market ds={ds} engine={engineReady ? engineRef.current : null} onPick={pick} onInfo={setInfo} locate={locate} />}
           {left === 'fits' && <FitBrowser ds={ds} lib={lib} activeId={fit?.id ?? null} status={storeStatus}
-            onOpen={(id) => update((s) => ({ ...s, settings: { ...s.settings, activeFitId: id } }))} onLib={setLib} onInfo={setInfo} />}
+            onOpen={(id) => update((s) => ({ ...s, settings: { ...s.settings, activeFitId: id } }))} onLib={setLib} onInfo={locateType} />}
           {left === 'char' && <CharacterEditor ds={ds} lib={lib} fit={fit} onLib={setLib} onFit={setFit} />}
           {left === 'profiles' && <Profiles lib={lib} fit={fit} onLib={setLib} onFit={setFit} />}
           {left === 'about' && <About cfg={settings.engine} status={engineStatus} st={stats} ds={ds} build={build} graphBackend={graphBackend} />}
+          </div>
+          {infoState != null && (
+            <div className="infobar">
+              <ItemInfo ds={ds} id={infoState.id} ctx={infoState.ctx} fitted={fitted} fittedNote={fittedNote} onClose={() => setInfo(null)} onShow={setInfo} onSwap={fit ? swapInfoType : undefined}
+                overrides={fit ? Object.fromEntries((fit.overrides ?? []).filter((o) => o.type_id === infoState.id).map((o) => [o.attribute_id, o.value])) : undefined}
+                onOverride={fit ? (a, v) => setFit({ ...fit, overrides: [...(fit.overrides ?? []).filter((o) => !(o.type_id === infoState.id && o.attribute_id === a)), ...(v == null ? [] : [{ type_id: infoState.id, attribute_id: a, value: v }])] }) : undefined} />
+            </div>
+          )}
         </aside>
         <section className="center">
           <Tabs tabs={[['fit', t('Fit')], ['graphs', t('Graphs')], ['compare', t('Compare')], ['whatif', t('What-if')]]} value={center} onChange={setCenter} />
           {center === 'compare' ? <Compare ds={ds} lib={lib} activeId={fit?.id ?? null} engine={engineReady ? engineRef.current : null} onOpen={(id) => { update((s) => ({ ...s, settings: { ...s.settings, activeFitId: id } })); setCenter('fit'); }} />
           : !fit ? <p className="muted">{t('No fit selected.')}</p> : center === 'whatif' ? <WhatIf ds={ds} fit={fit} lib={lib} engine={engineReady ? engineRef.current : null} onApply={setFit} />
           : center === 'fit'
-            ? <Fitting ds={ds} fit={fit} lib={lib} stats={stats} onChange={setFit} onInfo={setInfo} addProjected={addProjected} setAddProjected={setAddProjected} />
+            ? <Fitting ds={ds} fit={fit} lib={lib} stats={stats} onChange={setFit} onInfo={locateType} addProjected={addProjected} setAddProjected={setAddProjected} />
             : <Graphs ds={ds} st={stats} target={lib.targetProfiles[fit.target_profile_id]} engine={engineReady ? engineRef.current : null} request={request} engineReady={engineReady} lib={lib} fitId={fit.id} />}
         </section>
         <aside className="right"><Stats st={stats} busy={busy} ms={ms} error={calcErr} ds={ds} fit={fit} /><PriceBox ds={ds} st={stats} backend={ecfg.backend} settings={priceSet} onSettings={setPriceSet} snapshot={snapState} /></aside>
@@ -296,9 +319,6 @@ export default function App() {
         {t('EVE Online data © CCP hf.')} · <a href="https://github.com/EX-CT/EXFA-App">{t('source')}</a>
         {build && <> · {t('build')} <a href={build.run}>{build.web}</a> ({build.built_at?.replace('T', ' ').replace(/:\d\dZ$/, ' UTC')}) · {t('dataset')} {build.dataset_tag} · {t('engine')} <a href={build.engine_release_url}>{build.engine_release ?? 'n/a'}</a></>}
       </footer>
-      {info != null && <ItemInfo ds={ds} id={info} fitted={fitted} fittedNote={fittedNote} onClose={() => setInfo(null)}
-        overrides={fit ? Object.fromEntries((fit.overrides ?? []).filter((o) => o.type_id === info).map((o) => [o.attribute_id, o.value])) : undefined}
-        onOverride={fit ? (a, v) => setFit({ ...fit, overrides: [...(fit.overrides ?? []).filter((o) => !(o.type_id === info && o.attribute_id === a)), ...(v == null ? [] : [{ type_id: info, attribute_id: a, value: v }])] }) : undefined} />}
       {showIO && <ImportExport ds={ds} fit={fit} lib={lib} stats={stats} calc={engineReady && engineRef.current ? (r) => engineRef.current!.calc(r) : null} onImport={(f) => { addFit(f); setShowIO(false); }} onClose={() => setShowIO(false)} />}
     </div>
   );

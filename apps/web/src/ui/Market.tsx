@@ -10,29 +10,29 @@ const KIND_FILTERS: [string, Kind[] | null][] = [
   ['Drones', ['drone']], ['Fighters', ['fighter']], ['Implants', ['implant']], ['Boosters', ['booster']],
 ];
 
-function Node({ ds, id, onPick, onInfo, depth }: { ds: Dataset; id: number; onPick: (t: number) => void; onInfo: (t: number) => void; depth: number }) {
-  const [open, setOpen] = useState(false);
+function Node({ ds, id, onPick, onInfo, depth, openIds, onToggle, locating }: { ds: Dataset; id: number; onPick: (t: number) => void; onInfo: (t: number) => void; depth: number; openIds: Set<number>; onToggle: (id: number) => void; locating: number | null }) {
+  const open = openIds.has(id);
   const kids = ds.mgChildren.get(id) ?? [];
   const types = ds.mgTypes.get(id) ?? [];
   return (
     <li>
-      <div className="mg" style={{ paddingLeft: depth * 12 }} onClick={() => setOpen(!open)}>{open ? '▾' : '▸'} {ds.mgName(id)}</div>
+      <div className="mg" style={{ paddingLeft: depth * 12 }} onClick={() => onToggle(id)}>{open ? '▾' : '▸'} {ds.mgName(id)}</div>
       {open && (
         <ul>
-          {kids.map((k) => <Node key={k} ds={ds} id={k} onPick={onPick} onInfo={onInfo} depth={depth + 1} />)}
-          {types.map((t) => <TypeRowView key={t} ds={ds} id={t} onPick={onPick} onInfo={onInfo} depth={depth + 1} />)}
+          {kids.map((k) => <Node key={k} ds={ds} id={k} onPick={onPick} onInfo={onInfo} depth={depth + 1} openIds={openIds} onToggle={onToggle} locating={locating} />)}
+          {types.map((t) => <TypeRowView key={t} ds={ds} id={t} onPick={onPick} onInfo={onInfo} depth={depth + 1} locating={locating} />)}
         </ul>
       )}
     </li>
   );
 }
 
-export function TypeRowView({ ds, id, onPick, onInfo, depth = 0 }: { ds: Dataset; id: number; onPick: (t: number) => void; onInfo: (t: number) => void; depth?: number }) {
+export function TypeRowView({ ds, id, onPick, onInfo, depth = 0, locating }: { ds: Dataset; id: number; onPick: (t: number) => void; onInfo: (t: number) => void; depth?: number; locating?: number | null }) {
   const slot = ds.slot(id);
   const ml = ds.type(id)?.meta_level;
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   return (
-    <li className="trow" style={{ paddingLeft: depth * 12 + 10 }} onDoubleClick={() => onPick(id)} title={tr('double-click to add, or drag onto the fitting')}
+    <li className={'trow' + (locating === id ? ' locating' : '')} data-tid={id} style={{ paddingLeft: depth * 12 + 10 }} onDoubleClick={() => onPick(id)} title={tr('double-click to add, or drag onto the fitting')}
       onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY }); }}
       draggable onDragStart={(e) => { draggedType.id = id; e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('application/x-exfa-type', String(id)); e.dataTransfer.setData('text/plain', `type:${id}`); }} onDragEnd={() => { draggedType.id = null; }}>
       {menu && (
@@ -51,10 +51,30 @@ export function TypeRowView({ ds, id, onPick, onInfo, depth = 0 }: { ds: Dataset
   );
 }
 
-export function Market({ ds, engine, onPick, onInfo }: { ds: Dataset; engine?: Engine | null; onPick: (t: number) => void; onInfo: (t: number) => void }) {
+export function Market({ ds, engine, onPick, onInfo, locate }: { ds: Dataset; engine?: Engine | null; onPick: (t: number) => void; onInfo: (t: number) => void; locate?: { id: number; n: number } | null }) {
   const [q, setQ] = useState('');
   const [kf, setKf] = useState(0);
   const [engineIds, setEngineIds] = useState<number[] | null>(null);
+  const [openIds, setOpenIds] = useState<Set<number>>(new Set());
+  const [locating, setLocating] = useState<number | null>(null);
+  const onToggle = (id: number) => setOpenIds((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  // "Show in market": expand the tree to the type's market group and flash-highlight the row.
+  useEffect(() => {
+    if (!locate) return;
+    const mg = ds.raw.market_groups ?? {};
+    const chain: number[] = [];
+    let g = ds.type(locate.id)?.market_group;
+    while (g != null) { chain.push(g); g = mg[g]?.parent ?? null; }
+    setQ('');
+    setOpenIds((s) => new Set([...s, ...chain]));
+    setLocating(locate.id);
+    // Two frames so the newly expanded rows are in the DOM before scrolling.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      document.querySelector(`.trow[data-tid="${locate.id}"]`)?.scrollIntoView({ block: 'center' });
+      window.setTimeout(() => setLocating((x) => (x === locate.id ? null : x)), 2000);
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locate?.n]);
   // Pyfa-parity search: the engine's market.search does abbreviation shorthand (lse, 5mn mwd, dc ii) and re:
   // patterns; the local index stays as the fallback while the engine is off or busy.
   useEffect(() => {
@@ -79,7 +99,7 @@ export function Market({ ds, engine, onPick, onInfo }: { ds: Dataset; engine?: E
         <ul className="tree">{results.map((t) => <TypeRowView key={t} ds={ds} id={t} onPick={onPick} onInfo={onInfo} />)}
           {!results.length && <li className="muted">{tr('no matches')}</li>}</ul>
       ) : (
-        <ul className="tree">{ds.mgRoots.map((r) => <Node key={r} ds={ds} id={r} onPick={onPick} onInfo={onInfo} depth={0} />)}</ul>
+        <ul className="tree">{ds.mgRoots.map((r) => <Node key={r} ds={ds} id={r} onPick={onPick} onInfo={onInfo} depth={0} openIds={openIds} onToggle={onToggle} locating={locating} />)}</ul>
       )}
       <p className="hint">{tr('Click an item to add it to the active fit (or to the projected list when “add to projected” is on). Ships create a new fit.')}</p>
     </div>
@@ -91,10 +111,15 @@ const stripTags = (s: string) => s.replace(/<[^>]+>/g, '');
 /** Where an info dialog was opened from: a fitted item gets its engine-computed ("fitted") attribute values. */
 export type InfoCtx = { module?: number; drone?: number; ship?: boolean; charge?: boolean };
 
-export function ItemInfo({ ds, id, onClose, fitted, fittedNote, overrides, onOverride }: {
-  ds: Dataset; id: number; onClose: () => void; fitted?: Record<string, number> | null; fittedNote?: string;
+/** Curated attribute order for the quick-stats strip (only attrs the type actually has are shown). */
+const QUICK_ATTRS = ['cpu', 'power', 'capacitorNeed', 'rateOfFire', 'duration', 'damageMultiplier', 'damage', 'optimalRange', 'falloff', 'trackingSpeed', 'missileVelocity', 'maxVelocity', 'optimalSigRadius', 'energyDestabilizationAmount', 'powerTransferAmount', 'shieldBonus', 'armorDamageAmount', 'mass', 'volume', 'capacity', 'signatureRadius', 'baseSensorStrength'];
+
+export function ItemInfo({ ds, id, ctx, onClose, fitted, fittedNote, overrides, onOverride, onShow, onSwap }: {
+  ds: Dataset; id: number; ctx?: InfoCtx; onClose: () => void; fitted?: Record<string, number> | null; fittedNote?: string;
   /** attribute id -> overridden base value for this type in the active fit; onOverride(attr, null) removes it */
   overrides?: Record<number, number>; onOverride?: (attr: number, value: number | null) => void;
+  /** switch the pane to another type; swap the fitted module for another variation */
+  onShow?: (id: number) => void; onSwap?: (id: number) => void;
 }) {
   const [editOv, setEditOv] = useState(false);
   const t = ds.type(id);
@@ -102,6 +127,13 @@ export function ItemInfo({ ds, id, onClose, fitted, fittedNote, overrides, onOve
   if (!t) return null;
   const traits = ds.raw.traits?.[id];
   const req = ds.raw.required_skills?.[id] ?? [];
+  const vars = ds.variations(id);
+  const quick = QUICK_ATTRS.map((n) => {
+    const aid = ds.attrId(n);
+    const v = aid != null ? t.attrs[aid] : undefined;
+    const info = aid != null ? ds.raw.attributes[aid] : undefined;
+    return v == null ? null : { n, v, info };
+  }).filter(Boolean) as { n: string; v: number; info?: { display?: string; name?: string; unit?: number | null } }[];
   const fittedById = new Map<number, number>();
   for (const [k, v] of Object.entries(fitted ?? {})) { const aid = /^\d+$/.test(k) ? +k : ds.attrId(k); if (aid != null && typeof v === 'number') fittedById.set(aid, v); }
   const ids = new Set([...Object.keys(t.attrs).map(Number), ...fittedById.keys()]);
@@ -114,10 +146,26 @@ export function ItemInfo({ ds, id, onClose, fitted, fittedNote, overrides, onOve
   const bonus = (b: { bonus: number | null; text: string; text_zh?: string; unit?: number | null }) =>
     `${b.bonus != null ? b.bonus + unit(b.unit) + ' ' : ''}${stripTags(zh && b.text_zh ? b.text_zh : b.text)}`;
   return (
-    <div className="modal" onClick={onClose}>
-      <div className="dialog" onClick={(e) => e.stopPropagation()}>
-        <h2 className="infohead"><TypeIcon id={id} size={64} render={ds.kind(id) === 'ship' || ds.kind(id) === 'structure'} /> {ds.name(id)} <small className="muted">#{id} · {ds.groupName(t.group)}</small></h2>
-        {ds.description(id) && <p className="desc">{stripTags(ds.description(id)!)}</p>}
+    <div className="infopane">
+      <h2 className="infohead"><TypeIcon id={id} size={40} render={ds.kind(id) === 'ship' || ds.kind(id) === 'structure'} /> {ds.name(id)} <small className="muted">#{id} · {ds.groupName(t.group)}</small>
+        <button className="mini infoclose" title={tr('Close')} onClick={onClose}>✕</button></h2>
+      {quick.length > 0 && (
+        <div className="qstats">{quick.map((x) => (
+          <span key={x.n}><b>{x.info?.display || x.info?.name || x.n}</b> {+x.v.toFixed(3)}{x.info?.unit != null ? ' ' + unit(x.info.unit) : ''}</span>
+        ))}</div>
+      )}
+      {vars.length > 1 && (
+        <div className="varrow">
+          <span className="ctxlabel">{tr('Variations')}:</span>
+          {vars.map((v) => (
+            <span key={v} className="vchipwrap">
+              <button className={'vchip' + (v === id ? ' on' : '')} onClick={() => onShow?.(v)}>{ds.name(v)}</button>
+              {onSwap && ctx?.module != null && v !== id && <button className="vswap" title={tr('Swap fitted module')} onClick={() => onSwap(v)}>⇄</button>}
+            </span>
+          ))}
+        </div>
+      )}
+      {ds.description(id) && <p className="desc">{stripTags(ds.description(id)!)}</p>}
         {traits && (
           <div className="traits">
             {Object.entries(traits.skills ?? {}).map(([sk, bs]) => (
@@ -142,8 +190,6 @@ export function ItemInfo({ ds, id, onClose, fitted, fittedNote, overrides, onOve
               {editOv && <td><input className="qty wide ovin" data-attr={x.a} type="number" value={ov ?? ''} placeholder="—" onChange={(e) => onOverride!(x.a, e.target.value === '' ? null : +e.target.value)} /></td>}</tr>;
           })}
         </tbody></table>
-        <button onClick={onClose}>{tr('Close')}</button>
-      </div>
     </div>
   );
 }
