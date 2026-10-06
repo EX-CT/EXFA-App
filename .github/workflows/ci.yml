@@ -58,9 +58,9 @@ jobs:
           gh release download "$TAG" -R EX-CT/EXFA-Data -D "$RUNNER_TEMP/data" -p 'dataset-*.json.gz'
           echo "EXFA_DATASET=$(ls "$RUNNER_TEMP"/data/dataset-*.json.gz)" >> "$GITHUB_ENV"
           echo "dataset: $TAG" >> "$GITHUB_STEP_SUMMARY"
-      - name: Pyfa presets (legacy oracle data for built-in profile cases; EXFA-Data no longer produces presets-pyfa, the last copy is the frozen legacy release)
+      - name: Pyfa presets (GPL oracle data for built-in profile cases; regenerated with renamed-item conversions — EXFA-Bench presets-pyfa-3569502-r6)
         run: |
-          gh release download sde-3569502-r5 -R EX-CT/eve-sde-pipeline -D "$RUNNER_TEMP/data" -p 'presets-pyfa-*'
+          gh release download presets-pyfa-3569502-r6 -R EX-CT/EXFA-Bench -D "$RUNNER_TEMP/data" -p 'presets-pyfa-*'
           echo "EXFA_PYFA_DATA=$(ls "$RUNNER_TEMP"/data/presets-pyfa-*.json | head -1)" >> "$GITHUB_ENV"
       - name: Engine from the latest EXFA-Engine release
         run: |
