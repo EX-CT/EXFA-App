@@ -5,7 +5,7 @@ import type { InfoCtx } from './Market';
 import type { Dataset, Slot } from '../data/dataset';
 import { addItemToFit, draggedType, moveModule, type Fit, type FitModule, type Library, type ModState } from '../fit/model';
 import type { FitStats } from '../engine/adapter';
-import { Tabs } from './common';
+import { Tabs, TypeIcon } from './common';
 import { applyImplantSet, saveUserImplantSets, useSdePresets, userImplantSets, type ImplantSet } from '../data/sdePresets';
 
 const SLOTS: [Slot, string][] = [['high', 'High slots'], ['mid', 'Mid slots'], ['low', 'Low slots'], ['rig', 'Rigs'], ['subsystem', 'Subsystems'], ['service', 'Services']];
@@ -91,6 +91,7 @@ function ModuleRow({ ds, m, idx, fit, stats, onChange, onInfo, menu, setMenu }: 
       }}>
       {menu?.i === idx && <CtxMenu x={menu.x} y={menu.y} ds={ds} m={m} vars={ds.variations(m.type_id)} onInfo={onInfo} onChange={set} onRemove={remove} onClose={() => setMenu(null)} />}
       <button className={'state s-' + m.state} onClick={() => cycle(1)} title={`${t(m.state)} (${t('click: next state')})`}>{STATE_ICON[m.state]}</button>
+      <TypeIcon id={m.mutation?.base_type_id ?? m.type_id} size={18} />
       <span className="mname" onClick={() => onInfo(m.type_id, { module: idx })}>{ds.name(m.type_id)}{m.mutation ? ' ✦' : ''}</span>
       {charges.length > 0 && (
         <select value={m.charge_type_id ?? ''} onChange={(e) => set({ charge_type_id: e.target.value ? +e.target.value : null })}>
@@ -191,13 +192,13 @@ function Bays(p: FitProps) {
   return (
     <>
       {fit.drones.length > 0 && <div className="bay"><h4>{t('Drones')}</h4>{fit.drones.map((d, i) => (
-        <div className="mod" key={i}><span className="mname" onClick={() => onInfo(d.type_id, { drone: i })}>{ds.name(d.type_id)}</span>
+        <div className="mod" key={i}><TypeIcon id={d.type_id} size={18} /><span className="mname" onClick={() => onInfo(d.type_id, { drone: i })}>{ds.name(d.type_id)}</span>
           <span>{t('qty')} <Qty value={d.quantity} min={1} onChange={(v) => onChange({ ...fit, drones: fit.drones.map((x, j) => (j === i ? { ...x, quantity: v, active: Math.min(x.active, v) } : x)) })} /></span>
           <span>{t('active')} <Qty value={d.active} max={d.quantity} onChange={(v) => onChange({ ...fit, drones: fit.drones.map((x, j) => (j === i ? { ...x, active: v } : x)) })} /></span>
           {dehp(i) != null && <span className="muted dehp" title={t('EHP of one drone (damage pattern of the fit)')}>{Math.round(dehp(i)!)} EHP</span>}
           <button className="mini" onClick={() => rm('drones', i)}>✕</button></div>))}</div>}
       {fit.fighters.length > 0 && <div className="bay"><h4>{t('Fighters')}</h4>{fit.fighters.map((f, i) => (
-        <div className="mod" key={i}><span className="mname" onClick={() => onInfo(f.type_id)}>{ds.name(f.type_id)}</span>
+        <div className="mod" key={i}><TypeIcon id={f.type_id} size={18} /><span className="mname" onClick={() => onInfo(f.type_id)}>{ds.name(f.type_id)}</span>
           <span>{t('squadron')} <Qty value={f.quantity} min={1} onChange={(v) => onChange({ ...fit, fighters: fit.fighters.map((x, j) => (j === i ? { ...x, quantity: v } : x)) })} /></span>
           <label><input type="checkbox" checked={f.active} onChange={(e) => onChange({ ...fit, fighters: fit.fighters.map((x, j) => (j === i ? { ...x, active: e.target.checked } : x)) })} /> {t('launched')}</label>
           {fehp(i) != null && <span className="muted fehp" title={t('EHP of one fighter (damage pattern of the fit)')}>{Math.round(fehp(i)!)} EHP</span>}
@@ -213,8 +214,8 @@ function Bays(p: FitProps) {
           })}</div></div>))}</div>}
       <ImplantSets {...p} />
       {(fit.implants.length > 0 || fit.boosters.length > 0) && <div className="bay"><h4>{t('Implants & boosters')}</h4>
-        {fit.implants.map((t, i) => <div className="mod" key={'i' + i}><span className="mname" onClick={() => onInfo(t)}>{ds.name(t)}</span><span className="muted">{tr('slot')} {ds.attr(t, 'implantness') ?? '?'}</span><button className="mini" onClick={() => rm('implants', i)}>✕</button></div>)}
-        {fit.boosters.map((b, i) => <div className="mod" key={'b' + i}><span className="mname" onClick={() => onInfo(b.type_id)}>{ds.name(b.type_id)}</span><span className="muted">{t('booster slot')} {ds.attr(b.type_id, 'boosterness') ?? '?'}</span><button className="mini" onClick={() => rm('boosters', i)}>✕</button>
+        {fit.implants.map((t, i) => <div className="mod" key={'i' + i}><TypeIcon id={t} size={18} /><span className="mname" onClick={() => onInfo(t)}>{ds.name(t)}</span><span className="muted">{tr('slot')} {ds.attr(t, 'implantness') ?? '?'}</span><button className="mini" onClick={() => rm('implants', i)}>✕</button></div>)}
+        {fit.boosters.map((b, i) => <div className="mod" key={'b' + i}><TypeIcon id={b.type_id} size={18} /><span className="mname" onClick={() => onInfo(b.type_id)}>{ds.name(b.type_id)}</span><span className="muted">{t('booster slot')} {ds.attr(b.type_id, 'boosterness') ?? '?'}</span><button className="mini" onClick={() => rm('boosters', i)}>✕</button>
           <div className="subopts">{ds.boosterSideEffects(b.type_id).map((se) => {
             const on = (b.side_effects ?? []).includes(se.effect);
             const toggle = () => onChange({ ...fit, boosters: fit.boosters.map((x, j) => (j === i ? { ...x, side_effects: on ? (x.side_effects ?? []).filter((e) => e !== se.effect) : [...(x.side_effects ?? []), se.effect] } : x)) });

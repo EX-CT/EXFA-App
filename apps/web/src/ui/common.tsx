@@ -1,6 +1,14 @@
 import type { ReactNode } from 'react';
 import { t } from '../i18n';
 
+/** Item icon from CCP's image CDN (images.evetech.net, no auth). Ships/structures get the
+ * 3D render endpoint, everything else the icon endpoint. Lazy-loaded; hidden on 404. */
+export function TypeIcon({ id, size = 32, render = false }: { id: number; size?: number; render?: boolean }) {
+  return <img className="typeicon" width={size} height={size} loading="lazy" alt="" draggable={false}
+    src={`https://images.evetech.net/types/${id}/${render ? 'render' : 'icon'}?size=${size}`}
+    onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = 'hidden'; }} />;
+}
+
 export const fmt = (v: number | null | undefined, d = 1): string => {
   if (v == null || !Number.isFinite(v)) return '—';
   const a = Math.abs(v);

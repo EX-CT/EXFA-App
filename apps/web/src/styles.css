@@ -108,3 +108,10 @@ button.tiny { font-size: 10px; padding: 0 4px; margin-left: 3px; }
 .ctxmenu button.danger { color: #ff9d9d; }
 .ctxmenu .ctxgroup { border-top: 1px solid #263039; margin-top: 3px; padding-top: 2px; }
 p.desc { color: #aab8c5; font-size: 12px; line-height: 1.5; }
+
+/* type icons (images.evetech.net) */
+.typeicon { vertical-align: middle; border-radius: 3px; background: #0b0f14; flex: none; }
+.trow .typeicon { margin-right: 2px; }
+.infohead { display: flex; align-items: center; gap: 10px; }
+.lib-name .typeicon { margin-right: 6px; }
+.mod .typeicon { margin-right: 2px; }

@@ -146,7 +146,7 @@ export function FitBrowser({ ds, lib, activeId, status, onOpen, onLib }: {
           <button className="mini lib-edit-save" onClick={saveEdit}>✔</button><button className="mini" onClick={() => setEdit(null)}>✕</button>
         </span>
       ) : (
-        <span className="lib-name"><b>{ds.name(f.ship_type_id)}</b> {f.name}
+        <span className="lib-name"><TypeIcon id={f.ship_type_id} size={24} /> <b>{ds.name(f.ship_type_id)}</b> {f.name}
           {(f.tags ?? []).map((x) => <span key={x} className="tag">{x}</span>)}</span>
       )}
       <span className="right">
