@@ -1,9 +1,7 @@
 // FitRequest JSON (engine contract / exfa-formats output, optional fields may be null or missing) <-> StructuredFit.
 import type { Dataset, Slot } from '../data/dataset';
-import { defaultState } from '../fit/states';
-import type { ModState, StructuredFit, StructuredMutation } from './types';
-
-const STATES: ModState[] = ['offline', 'online', 'active', 'overheated'];
+import { allowedStates, defaultState } from '../fit/states';
+import type { StructuredFit, StructuredMutation } from './types';
 const mutation = (m: any): StructuredMutation | null =>
   m && m.base_type_id && m.mutaplasmid_type_id ? { base_type_id: m.base_type_id, mutaplasmid_type_id: m.mutaplasmid_type_id, attributes: { ...(m.attributes ?? {}) } } : null;
 
@@ -22,7 +20,7 @@ export function requestToStructured(ds: Dataset, req: any, name?: string | null,
   for (const m of req.modules ?? []) {
     const slot: Slot | null = m.slot ?? ds.slot(m.type_id);
     if (!slot) { warnings.push(`${ds.name(m.type_id, 'en')} is not a fittable module`); continue; }
-    sf.modules.push({ type_id: m.type_id, slot, state: STATES.includes(m.state) ? m.state : defaultState(ds, m.type_id), charge_type_id: m.charge_type_id ?? null, mutation: mutation(m.mutation) });
+    sf.modules.push({ type_id: m.type_id, slot, state: allowedStates(ds, m.type_id).includes(m.state) ? m.state : defaultState(ds, m.type_id), charge_type_id: m.charge_type_id ?? null, mutation: mutation(m.mutation) });
   }
   for (const d of req.drones ?? []) sf.drones.push({ type_id: d.type_id, quantity: d.quantity ?? 1, active: d.active ?? d.quantity ?? 1, ...(mutation(d.mutation) ? { mutation: mutation(d.mutation) } : {}) });
   for (const f of req.fighters ?? []) sf.fighters.push({ type_id: f.type_id, quantity: f.quantity ?? ds.attr(f.type_id, 'fighterSquadronMaxSize') ?? 1, active: f.active ?? true, abilities: f.abilities ?? null });

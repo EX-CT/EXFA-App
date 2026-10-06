@@ -4,12 +4,12 @@ const tr = t;
 import type { InfoCtx } from './Market';
 import type { Dataset, Slot } from '../data/dataset';
 import { addItemToFit, draggedType, moveModule, type Fit, type FitModule, type Library, type ModState } from '../fit/model';
+import { allowedStates } from '../fit/states';
 import type { FitStats } from '../engine/adapter';
 import { FloatMenu, fmt, Tabs, TypeIcon } from './common';
 import { applyImplantSet, saveUserImplantSets, useSdePresets, userImplantSets, type ImplantSet } from '../data/sdePresets';
 
 const SLOTS: [Slot, string][] = [['high', 'High slots'], ['mid', 'Mid slots'], ['low', 'Low slots'], ['rig', 'Rigs'], ['subsystem', 'Subsystems'], ['service', 'Services']];
-const STATES: ModState[] = ['offline', 'online', 'active', 'overheated'];
 const STATE_ICON: Record<ModState, string> = { offline: '○', online: '◐', active: '●', overheated: '🔥' };
 
 export interface FitProps {
@@ -50,7 +50,7 @@ function CtxMenu({ x, y, ds, m, vars, nIdentical, grouped, onGroup, onInfo, onCh
       )}
       <div className="ctxgroup">
         <div className="ctxlabel">{t('State')}</div>
-        {STATES.map((s) => <button key={s} className={s === m.state ? 'on' : ''} onClick={() => { onChange({ state: s }); onClose(); }}>{STATE_ICON[s]} {t(s)}</button>)}
+        {allowedStates(ds, m.type_id).map((s) => <button key={s} className={s === m.state ? 'on' : ''} onClick={() => { onChange({ state: s }); onClose(); }}>{STATE_ICON[s]} {t(s)}</button>)}
       </div>
       <button className="danger" onClick={() => { onRemove(); onClose(); }}>{t('Remove')}</button>
     </FloatMenu>
@@ -70,7 +70,7 @@ function ModuleRow({ ds, m, idx, grp, fit, stats, onChange, onInfo, menu, setMen
     onChange({ ...fit, modules: fit.modules.map((x) => (x.slot === m.slot && x.type_id === m.type_id && x.group == null ? { ...x, group: gid } : x)) });
   };
   const cycle = (dir: number) => {
-    const allowed = ds.slot(m.type_id) === 'rig' || ds.slot(m.type_id) === 'subsystem' ? ['offline', 'online'] as ModState[] : STATES;
+    const allowed = allowedStates(ds, m.type_id);
     const i = allowed.indexOf(m.state);
     set({ state: allowed[(i + dir + allowed.length) % allowed.length] });
   };
