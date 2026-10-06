@@ -5,7 +5,7 @@ import type { InfoCtx } from './Market';
 import type { Dataset, Slot } from '../data/dataset';
 import { addItemToFit, draggedType, moveModule, type Fit, type FitModule, type Library, type ModState } from '../fit/model';
 import type { FitStats } from '../engine/adapter';
-import { Tabs, TypeIcon } from './common';
+import { fmt, Tabs, TypeIcon } from './common';
 import { applyImplantSet, saveUserImplantSets, useSdePresets, userImplantSets, type ImplantSet } from '../data/sdePresets';
 
 const SLOTS: [Slot, string][] = [['high', 'High slots'], ['mid', 'Mid slots'], ['low', 'Low slots'], ['rig', 'Rigs'], ['subsystem', 'Subsystems'], ['service', 'Services']];
@@ -73,6 +73,10 @@ function ModuleRow({ ds, m, idx, fit, stats, onChange, onInfo, menu, setMenu }: 
   };
   const wpn = stats?.offense?.weapons?.find((w: any) => w.module_index === idx);
   const modStats = stats?.modules?.find((x: any) => x.module_index === idx);
+  const priceRow = stats?.price?.sections?.modules?.items?.find((x: any) => x.index === idx);
+  const sigRad = ds.attr(m.type_id, 'optimalSigRadius');
+  const trackNorm = wpn?.tracking && sigRad ? (wpn.tracking * 40000) / sigRad : null;
+  const baseRangeM = !wpn ? (ds.attr(m.type_id, 'maxRange') ?? null) : null;
   const viol = (stats?.violations ?? []).filter((v: any) => v.module_index === idx);
   const muta = m.mutation ? ds.raw.mutaplasmids?.[m.mutation.mutaplasmid_type_id] : null;
   return (
@@ -107,7 +111,17 @@ function ModuleRow({ ds, m, idx, fit, stats, onChange, onInfo, menu, setMenu }: 
       )}
       {mutas.length > 0 && <button className="mini" onClick={() => setShowMuta(!showMuta)} title={t('Mutaplasmid')}>✦</button>}
       {modStats?.heat && <span className="heat" title={`${t('expected overheat burnout')}: ${modStats.heat.burn_cycles} ${t('cycles')}`}>🔥 {fmtBurn(modStats.heat.burnout_s)}</span>}
-      <span className="mstat">{wpn ? `${wpn.dps?.total?.toFixed(1)} dps` : modStats?.cap_use_gj_s ? `${modStats.cap_use_gj_s.toFixed(2)} GJ/s` : ''}</span>
+      <span className="mcols">
+        {modStats?.power != null && modStats.power > 0 && <span className="mc" title={t('powergrid (MW)')}>{fmt(modStats.power, 1) + ' MW'}</span>}
+        {modStats?.cpu != null && modStats.cpu > 0 && <span className="mc" title={t('cpu (tf)')}>{fmt(modStats.cpu, 1) + ' tf'}</span>}
+        {modStats?.cap_use_gj_s ? <span className="mc" title={t('capacitor use (GJ/s)')}>{fmt(modStats.cap_use_gj_s, 2) + ' GJ/s'}</span> : null}
+        {modStats?.cycle_time_ms ? <span className="mc" title={t('cycle time')}>{fmt(modStats.cycle_time_ms / 1000, 1) + ' s'}</span> : null}
+        {wpn?.optimal_m != null && <span className="mc" title={t('optimal + falloff')}>{fmt(wpn.optimal_m / 1000, 1) + (wpn.falloff_m ? '+' + fmt(wpn.falloff_m / 1000, 1) : '') + ' km'}</span>}
+        {baseRangeM ? <span className="mc dim" title={t('max range (base attribute)')}>{fmt(baseRangeM / 1000, 1) + ' km'}</span> : null}
+        {trackNorm != null && <span className="mc" title={t('tracking (normalized)')}>{fmt(trackNorm, 0)}</span>}
+        {wpn?.dps?.total != null && <span className="mc dps" title={t('damage per second')}>{wpn.dps.total.toFixed(1) + ' dps'}</span>}
+        {priceRow && <span className="mc" title={t('market price (Jita)')}>{fmt(priceRow.unit_isk, 0) + ' ISK'}</span>}
+      </span>
       <button className="mini" onClick={remove} title={t('Remove')}>✕</button>
       {showMuta && (
         <div className="muta">

@@ -115,3 +115,8 @@ p.desc { color: #aab8c5; font-size: 12px; line-height: 1.5; }
 .infohead { display: flex; align-items: center; gap: 10px; }
 .lib-name .typeicon { margin-right: 6px; }
 .mod .typeicon { margin-right: 2px; }
+/* per-module stat columns (pyfa-style): pg, cpu, cap, cycle, range, tracking, dps, price */
+.mcols { display: flex; gap: 8px; margin-left: 4px; flex-wrap: nowrap; }
+.mc { color: var(--mut); font-size: 11px; white-space: nowrap; }
+.mc i { font-style: normal; opacity: 0.6; margin-left: 2px; }
+.mc.dim { opacity: 0.6; } .mc.dps { color: #e8b06f; }
