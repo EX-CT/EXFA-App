@@ -1,5 +1,7 @@
 # EXFA-App — EXFA · 精密装配助理
 
+[![pages](https://github.com/EX-CT/EXFA-App/actions/workflows/pages.yml/badge.svg)](https://github.com/EX-CT/EXFA-App/actions/workflows/pages.yml) [![site](https://img.shields.io/badge/site-ex--ct.github.io%2FEXFA--App-brightgreen)](https://ex-ct.github.io/EXFA-App/)
+
 **Live site: https://ex-ct.github.io/EXFA-App/** — an EVE Online fitting tool in the browser,
 the Pyfa-shaped replacement on top of the Rust engine in
 [EX-CT/EXFA-Engine](https://github.com/EX-CT/EXFA-Engine). No install, no account required;
