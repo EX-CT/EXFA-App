@@ -13,6 +13,7 @@ import { exportFits, importFits, libraryFromStructured } from '../formats';
 import { importPyfaDb, isSqlite } from '../formats/pyfadb';
 import { saveUserImplantSets, userImplantSets } from '../data/sdePresets';
 import type { StoreStatus } from '../store';
+import { TypeIcon } from './common';
 
 const download = (name: string, text: string, type: string) => {
   const a = document.createElement('a');
