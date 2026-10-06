@@ -122,7 +122,7 @@ function ModuleRow({ ds, m, idx, fit, stats, onChange, onInfo, menu, setMenu }: 
         {wpn?.dps?.total != null && <span className="mc dps" title={t('damage per second')}>{wpn.dps.total.toFixed(1) + ' dps'}</span>}
         {priceRow && <span className="mc" title={t('market price (Jita)')}>{fmt(priceRow.unit_isk, 0) + ' ISK'}</span>}
       </span>
-      <button className="mini" onClick={remove} title={t('Remove')}>✕</button>
+      <button className="mini rm" onClick={remove} title={t('Remove')}>✕</button>
       {showMuta && (
         <div className="muta">
           <select value={m.mutation?.mutaplasmid_type_id ?? ''} onChange={(e) => {

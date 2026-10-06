@@ -12,7 +12,7 @@ header h1 { font-size: 16px; margin: 0; }
 .engine { display: flex; gap: 6px; align-items: center; flex: 1; min-width: 300px; }
 .engine select { max-width: 360px; }
 .engine .status { color: var(--mut); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 420px; }
-main { flex: 1; display: grid; grid-template-columns: 330px 1fr 380px; min-height: 0; }
+main { flex: 1; display: grid; grid-template-columns: 330px 1fr 380px; min-height: 0; max-width: 1920px; width: 100%; margin: 0 auto; }
 aside, .center { overflow: auto; padding: 8px; border-right: 1px solid var(--line); }
 aside.right { border-right: 0; display: block; margin-left: 0; }
 footer { padding: 4px 10px; border-top: 1px solid var(--line); font-size: 11px; }
@@ -34,7 +34,8 @@ ul.fits li { padding: 4px; border-bottom: 1px solid var(--line); cursor: pointer
 .slotgroup h4, .bay h4, h4 { margin: 8px 0 3px; color: var(--mut); font-weight: 600; }
 .mod { display: flex; gap: 6px; align-items: center; padding: 2px 4px; border-bottom: 1px solid #1d242c; flex-wrap: wrap; }
 .mod.empty { color: #55606b; font-style: italic; } .mod.bad { background: #3a1f22; }
-.mod .mname { flex: 1; cursor: pointer; min-width: 160px; } .mod .mname:hover { color: var(--acc); }
+.mod .mname { flex: 0 0 250px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; } .mod .mname:hover { color: var(--acc); }
+.mod .rm { margin-left: auto; }
 .mod select { max-width: 230px; }
 .mstat { color: var(--mut); font-size: 11px; min-width: 70px; text-align: right; }
 .state { width: 26px; padding: 0; } .s-offline { color: #666; } .s-online { color: #aaa; } .s-active { color: var(--ok); } .s-overheated { color: #ff8a65; }
@@ -116,7 +117,7 @@ p.desc { color: #aab8c5; font-size: 12px; line-height: 1.5; }
 .lib-name .typeicon { margin-right: 6px; }
 .mod .typeicon { margin-right: 2px; }
 /* per-module stat columns (pyfa-style): pg, cpu, cap, cycle, range, tracking, dps, price */
-.mcols { display: flex; gap: 8px; margin-left: 4px; flex-wrap: nowrap; }
+.mcols { display: flex; gap: 8px; margin-left: 4px; flex-wrap: wrap; }
 .mc { color: var(--mut); font-size: 11px; white-space: nowrap; }
 .mc i { font-style: normal; opacity: 0.6; margin-left: 2px; }
 .mc.dim { opacity: 0.6; } .mc.dps { color: #e8b06f; }
