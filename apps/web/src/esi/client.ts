@@ -66,7 +66,7 @@ export async function handleCallback(code: string, state: string): Promise<strin
   const tok = await tokenRequest(new URLSearchParams({
     grant_type: 'authorization_code', code, redirect_uri: callbackUrl(), client_id: esiClientId(), code_verifier: verifier,
   }));
-  const ch = await verify(tok.access_token);
+  const ch = verify(tok.access_token);
   const all = loadEsiCharacters();
   all[ch.character_id] = {
     character_id: ch.character_id, character_name: ch.character_name, scopes: ESI_SCOPES,
@@ -77,11 +77,15 @@ export async function handleCallback(code: string, state: string): Promise<strin
   return returnTo;
 }
 
-async function verify(accessToken: string): Promise<{ character_id: number; character_name: string }> {
-  const r = await fetch('https://esi.evetech.net/verify/', { headers: { Authorization: `Bearer ${accessToken}` } });
-  if (!r.ok) throw new Error(`ESI verify: HTTP ${r.status}`);
-  const j = await r.json();
-  return { character_id: j.CharacterID, character_name: j.CharacterName };
+/** SSO v2 access tokens are JWTs: sub = "CHARACTER:EVE:<id>", name = character name.
+ * Decoding locally avoids a network call (the legacy esi.evetech.net/verify endpoint is gone). */
+function verify(accessToken: string): { character_id: number; character_name: string } {
+  const parts = accessToken.split('.');
+  if (parts.length !== 3) throw new Error('ESI token: not a JWT');
+  const j = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+  const id = Number(String(j.sub ?? '').replace('CHARACTER:EVE:', ''));
+  if (!id || !j.name) throw new Error('ESI token: missing character claims');
+  return { character_id: id, character_name: j.name };
 }
 
 async function accessToken(ch: EsiCharacter): Promise<string> {
