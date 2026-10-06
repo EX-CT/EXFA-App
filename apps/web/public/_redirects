@@ -1,0 +1,2 @@
+# SPA fallback for Cloudflare Pages (client routes like /esi/callback)
+/esi/callback  /index.html  200

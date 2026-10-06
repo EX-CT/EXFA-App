@@ -114,7 +114,7 @@ jobs:
             "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" "$DEFAULT_ENGINE" "${PRICES_SNAPSHOT:-}" > public/build-info.json
           cat public/build-info.json
       - run: npm run build
-        env: { BASE: /EXFA-App/ }
+        env: { BASE: /EXFA-App/, VITE_ESI_CLIENT_ID: ${{ vars.ESI_CLIENT_ID }} }
       # SPA fallback so /esi/callback (and other client routes) load index.html on GitHub Pages
       - run: cp apps/web/dist/index.html apps/web/dist/404.html
       - name: Smoke test (headless Chrome computes the demo fit)
@@ -160,6 +160,8 @@ jobs:
           if-no-files-found: warn
       - uses: actions/upload-pages-artifact@v3
         with: { path: apps/web/dist }
+      - uses: actions/upload-artifact@v4
+        with: { name: site-dist, path: apps/web/dist, retention-days: 7 }
   deploy:
     needs: build
     runs-on: ubuntu-latest
@@ -169,3 +171,21 @@ jobs:
     steps:
       - id: d
         uses: actions/deploy-pages@v4
+
+  # Second publish target: Cloudflare Pages via Direct Upload of the same gated artifact
+  # (docs/25). Disabled until CF_API_TOKEN + CF_ACCOUNT_ID secrets exist and the
+  # repository variable CF_ENABLED=true is set.
+  deploy-cf:
+    needs: build
+    if: vars.CF_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: cloudflare-pages
+      url: https://exfa.pages.dev
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: site-dist, path: dist }
+      - run: npx wrangler@4 pages deploy dist --project-name="${{ vars.CF_PROJECT || 'exfa' }}" --branch=main
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}

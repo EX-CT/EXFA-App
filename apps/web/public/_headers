@@ -1,0 +1,13 @@
+# Cloudflare Pages headers (GitHub Pages ignores this file)
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+/engines/f/*
+  Cache-Control: public, max-age=86400
+/data/dataset.json.gz
+  Cache-Control: public, max-age=86400
+/data/manifest.json
+  Cache-Control: no-cache
+/prices/*
+  Cache-Control: no-cache
+/build-info.json
+  Cache-Control: no-cache
