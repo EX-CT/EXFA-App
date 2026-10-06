@@ -1,8 +1,5 @@
-// Fit formats layer: every fit that enters the app as text (EFT, DNA, ESI JSON, share links …) is parsed here into
-// a StructuredFit, structured JSON with type ids only. The engines accept only structured fits plus skills (format
-// parsing is a frontend concern; engine RPC/WASM drops it), so nothing below this layer ever sees fit text.
-// The parser behind it is swappable (FitFormats): today the built-in TypeScript parsers (builtin.ts). Later it can
-// be the exfa-formats WASM package from EX-CT/EXFA-Engine, which implements the same interface without the UI changing.
+// EXFA Engine's formats RPC parses fit text into structured data. These types describe that RPC's boundary and keep
+// the App's fit model independent of the wire representation.
 import type { Slot } from '../data/dataset';
 
 export type ModState = 'offline' | 'online' | 'active' | 'overheated';
@@ -26,8 +23,7 @@ export interface StructuredFit {
   cargo: { type_id: number; quantity: number }[];
 }
 
-/** Import formats (exfa-formats `format_import`: Pyfa's detection order for `auto`). The built-in parsers read
- *  eft, dna and esi only. */
+/** Import formats supported by EXFA Engine v0.2.0 `format_import`. */
 export type ImportFormat = 'auto' | 'eft' | 'dna' | 'dna_alt' | 'dna_link' | 'esi' | 'xml' | 'eftcfg';
 export type ExportFormat = 'eft' | 'dna' | 'esi' | 'xml' | 'multibuy' | 'shipstats';
 export interface ParseResult { /** detected kind, e.g. "EFT", "DNA", "JSON", "XML" */ kind: string; fits: StructuredFit[]; warnings: string[] }
@@ -36,18 +32,6 @@ export interface ParseResult { /** detected kind, e.g. "EFT", "DNA", "JSON", "XM
 export interface ExportInput { name: string; notes?: string; fit: Record<string, unknown>; stats?: unknown }
 /** Export switches (exfa-formats `options`: implants, mutations, loaded_charges, boosters, cargo, charges, formatting). */
 export type ExportOptions = Record<string, boolean>;
-
-/** A fit-format implementation. `parse` throws on input it cannot read; recoverable problems (unknown item names,
- *  bad mutations …) are `warnings` and the item is skipped. Several fits in one text (a Pyfa multi-export, XML)
- *  come back as several `fits`. */
-export interface FitFormats {
-  readonly id: string;
-  readonly label: string;
-  readonly importFormats: ImportFormat[];
-  readonly exportFormats: ExportFormat[];
-  parse(text: string, format?: ImportFormat, path?: string): ParseResult;
-  export(input: ExportInput, format: ExportFormat, opts?: ExportOptions): string;
-}
 
 /** The request whose stats the `shipstats` export needs (exfa-formats `shipstats_request`): all attributes and
  *  no spool-up instead of the fit's spool settings, unrounded floats (`full_precision`, exfa 11cc19d). */

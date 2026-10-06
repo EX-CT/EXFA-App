@@ -31,7 +31,7 @@
     "vitest": "^5.0.3"
   },
   "license": "LGPL-3.0-or-later",
-  "description": "EXFA Web: browser UI for EXFA (engine-agnostic fitting calculator)",
+  "description": "EXFA Web: browser fitting assistant using the EXFA Engine WASM worker",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/EX-CT/EXFA-App.git",

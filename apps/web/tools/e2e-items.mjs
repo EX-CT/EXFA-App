@@ -1,12 +1,9 @@
-// e2e checks for the stats-ext outputs of F (20aa425: mining, outgoing reps, bombing, heat, drone EHP, validation). Called from tools/e2e.mjs with its page
+// E2E checks for Engine stats-ext outputs: mining, outgoing reps, bombing, heat, drone EHP and validation.
 // and helpers; every check has a stable id (web.e2e.<slug>, see docs/test-ids.md).
-export async function itemChecks({ p, url, sep, engine, check, stats, waitNew, clickText }) {
-  // F and the http bridge (eve-fit, same pin) return the stats-ext outputs; the other engines are only held to the UI
-  // hiding what they do not return
-  const EXT = engine === 'wasm-worker' || engine === 'http';
+export async function itemChecks({ p, withQuery, check, stats, waitNew, clickText }) {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const load = async (eft, ship) => {
-    await p.goto(`${url}${sep}engine=${engine}&eft=${encodeURIComponent(eft)}`, { waitUntil: 'networkidle0', timeout: 120000 });
+    await p.goto(withQuery(`eft=${encodeURIComponent(eft)}`), { waitUntil: 'networkidle0', timeout: 120000 });
     await p.waitForFunction((sh) => window.__lastStats?.ship?.name === sh && !window.__lastStats.error, { timeout: 120000 }, ship).catch(() => null);
     return stats();
   };
@@ -16,23 +13,23 @@ export async function itemChecks({ p, url, sep, engine, check, stats, waitNew, c
   const uiCodes = () => p.evaluate(() => [...new Set([...document.querySelectorAll('.stats ul.viol li[data-code]')].map((li) => li.dataset.code))].sort());
   let s;
 
-  // --- stats-ext 1.10 outputs (F 20aa425) ---
+  // --- Engine stats-ext 1.10 outputs ---
   s = await load('[Venture, E2E Venture]\n\n\nMiner II\nMiner II\n\n\nMining Drone I x2\n', 'Venture');
   const mt = await p.evaluate(() => document.querySelector('.stats .mining-total')?.textContent ?? null);
   check('web.e2e.mining-yield: mining section shows the engine yield (modules + drones = total m³/s)',
-    EXT ? s.mining?.total_m3_s > 0 && Math.abs(s.mining.modules_m3_s + s.mining.drones_m3_s - s.mining.total_m3_s) < 1e-6 && mt === `${fmt(s.mining.total_m3_s, 2)} m³/s` : (s.mining?.total_m3_s > 0) === (mt != null),
+    s.mining?.total_m3_s > 0 && Math.abs(s.mining.modules_m3_s + s.mining.drones_m3_s - s.mining.total_m3_s) < 1e-6 && mt === `${fmt(s.mining.total_m3_s, 2)} m³/s`,
     `${mt} (${JSON.stringify(s.mining)})`);
 
   s = await load('[Guardian, E2E Guardian]\n\n\nLarge Remote Armor Repairer II\nLarge Remote Capacitor Transmitter II\n', 'Guardian');
   const out = await p.evaluate(() => Object.fromEntries([...document.querySelectorAll('.stats table.outgoing tr[data-key]')].map((r) => [r.dataset.key, r.children[1].textContent])));
   check('web.e2e.outgoing-reps: outgoing remote armor reps and capacitor transfer shown with the engine values',
-    EXT ? s.outgoing?.current?.armor_per_s > 0 && s.outgoing.current.capacitor_per_s > 0 && out.armor_per_s === `${fmt(s.outgoing.current.armor_per_s)} HP/s` && out.capacitor_per_s === `${fmt(s.outgoing.current.capacitor_per_s)} GJ/s` && !out.shield_per_s : Object.keys(out).length === 0 || !!s.outgoing,
+    s.outgoing?.current?.armor_per_s > 0 && s.outgoing.current.capacitor_per_s > 0 && out.armor_per_s === `${fmt(s.outgoing.current.armor_per_s)} HP/s` && out.capacitor_per_s === `${fmt(s.outgoing.current.capacitor_per_s)} GJ/s` && !out.shield_per_s,
     JSON.stringify(out));
 
   // bombing table (bombs to kill, Covert Ops 0-5) of the Guardian
   const bt = await p.evaluate(() => { const d = document.querySelector('.stats details.bombing'); if (!d) return null; d.open = true; return Object.fromEntries([...d.querySelectorAll('tr[data-type]')].map((r) => [r.dataset.type, [...r.querySelectorAll('td.num')].map((x) => x.textContent)])); });
   check('web.e2e.bombing-table: bombs to kill per damage type and Covert Ops level match the engine',
-    EXT ? bt && ['em', 'thermal', 'kinetic', 'explosive'].every((k) => bt[k]?.length === 6 && bt[k].every((v, l) => v === fmt(s.bombing[k][`covert_ops_${l}`], 1))) : bt == null || !!s.bombing,
+    bt && ['em', 'thermal', 'kinetic', 'explosive'].every((k) => bt[k]?.length === 6 && bt[k].every((v, l) => v === fmt(s.bombing[k][`covert_ops_${l}`], 1))),
     JSON.stringify(bt?.em));
 
   // overheat: burnout per overheated module (modules[].heat); the rack position changes the heat damage
@@ -53,14 +50,14 @@ export async function itemChecks({ p, url, sep, engine, check, stats, waitNew, c
   const heatRows = await p.evaluate(() => [...document.querySelectorAll('.fitting .mod[data-idx]')].filter((r) => r.querySelector('.heat')).map((r) => +r.dataset.idx));
   const heatStats = (s.modules ?? []).filter((m) => m.heat).map((m) => m.module_index);
   check('web.e2e.overheat-burnout: overheated modules show the expected burnout time (modules[].heat)',
-    EXT ? heatStats.length === 4 && JSON.stringify(heatRows) === JSON.stringify(heatStats) : heatRows.length === heatStats.length,
+    heatStats.length === 4 && JSON.stringify(heatRows) === JSON.stringify(heatStats),
     `${heatRows} / ${heatStats}`);
 
   // drone EHP (drones.items[]) in the drone rows
   s = await load('[Vexor, E2E Drones]\n\n\n\n\nHammerhead II x5\nHobgoblin II x3\n', 'Vexor');
   const dehp = await text('.bay .mod .dehp');
   const dexp = (s.drones?.items ?? []).sort((a, b) => a.drone_index - b.drone_index).map((x) => `${Math.round(x.ehp.shield + x.ehp.armor + x.ehp.hull)} EHP`);
-  check('web.e2e.drone-ehp: each drone row shows the EHP of one drone (drones.items[])', EXT ? dexp.length === 2 && JSON.stringify(dehp) === JSON.stringify(dexp) : dehp.length === dexp.length, `${dehp} / ${dexp}`);
+  check('web.e2e.drone-ehp: each drone row shows the EHP of one drone (drones.items[])', dexp.length === 2 && JSON.stringify(dehp) === JSON.stringify(dexp), `${dehp} / ${dexp}`);
 
   // validation (F 2da8150): the formats layer drops what Pyfa would not fit, so the illegal items come from the market
   // (which adds them as asked): capital module on a frigate, a fifth gun (4 highs, 3 turrets), a medium rig, overloads
@@ -78,6 +75,6 @@ export async function itemChecks({ p, url, sep, engine, check, stats, waitNew, c
   const labels = await p.evaluate(() => [...document.querySelectorAll('.stats ul.viol li[data-code] b')].map((x) => x.textContent));
   const want = ['POWER_OVERLOAD', 'SLOTS_EXCEEDED', 'TURRET_HARDPOINTS', 'RIG_SIZE', 'SHIP_RESTRICTION'];
   check('web.e2e.validation-problems: engine violations (capital module on a frigate, slots, turrets, rig size, powergrid) are listed in Problems with their labels',
-    (EXT ? want.every((c) => ui.includes(c) && codes(s).includes(c)) : JSON.stringify(ui) === JSON.stringify(codes(s))) && labels.length > 0 && !labels.some((l) => /^[A-Z_]+$/.test(l)),
+    want.every((c) => ui.includes(c) && codes(s).includes(c)) && labels.length > 0 && !labels.some((l) => /^[A-Z_]+$/.test(l)),
     `ui ${ui.join(',')}; engine ${codes(s).join(',')}; modules ${(s.modules ?? []).map((m) => `${m.slot}:${m.name}`).join(', ')}`);
 }

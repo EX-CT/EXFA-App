@@ -20,8 +20,8 @@ export type SnapshotState = { state: 'off' } | { state: 'loading' } | { state: '
 
 interface Line { kind: string; index: number; type_id: number; name: string | null; quantity: number; unit_isk: number; total_isk: number; source: string; layer: string; multiplier?: number }
 
-export function PriceBox({ ds, st, backend, settings, onSettings, snapshot }: {
-  ds: Dataset; st: FitStats | null; backend: string; settings: PriceSettings; onSettings: (s: PriceSettings) => void; snapshot: SnapshotState;
+export function PriceBox({ ds, st, settings, onSettings, snapshot }: {
+  ds: Dataset; st: FitStats | null; settings: PriceSettings; onSettings: (s: PriceSettings) => void; snapshot: SnapshotState;
 }) {
   const price = st?.price;
   const prov = st?.provenance;
@@ -29,7 +29,7 @@ export function PriceBox({ ds, st, backend, settings, onSettings, snapshot }: {
   const lines: Line[] = price ? Object.values(price.sections ?? {}).flatMap((s: any) => s.items ?? []) : [];
   return (
     <Section title={t('Price')} right={price ? <b className="pricetotal">{isk(price.total_isk)}</b> : null}>
-      {!price ? <p className="muted small price-unsupported">{t('Prices are computed by the engine; this backend has no price block')} (<code>{backend}</code>). {t('Use the default backend (wasm-worker).')}</p> : <>
+      {!price ? <p className="muted small">{t('Calculate a fit to see price details.')}</p> : <>
         <div className="kv price-sections">{Object.entries(price.sections ?? {}).filter(([, s]: [string, any]) => s.total_isk > 0).map(([k, s]: [string, any]) => <span key={k} data-section={k}>{t(SECTION_LABEL[k] ?? k)} {isk(s.total_isk)}</span>)}</div>
         <details className="price-items">
           <summary>{t('Items')} ({lines.length}){price.complete ? '' : ` · ${t('missing')} ${price.missing.length}`}</summary>

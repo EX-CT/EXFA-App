@@ -6,7 +6,7 @@ import type { Dataset, Slot } from '../data/dataset';
 import { addItemToFit, draggedType, moveModule, type Fit, type FitModule, type Library, type ModState } from '../fit/model';
 import { allowedStates } from '../fit/states';
 import type { FitStats } from '../engine/adapter';
-import { FloatMenu, fmt, Tabs, TypeIcon } from './common';
+import { FloatMenu, fmt, Popover, Tabs, TypeIcon } from './common';
 import { applyImplantSet, saveUserImplantSets, useSdePresets, userImplantSets, type ImplantSet } from '../data/sdePresets';
 
 const SLOTS: [Slot, string][] = [['high', 'High slots'], ['mid', 'Mid slots'], ['low', 'Low slots'], ['rig', 'Rigs'], ['subsystem', 'Subsystems'], ['service', 'Services']];
@@ -174,6 +174,8 @@ function Qty({ value, onChange, min = 0, max = 999 }: { value: number; onChange:
 function ImplantSets({ ds, fit, onChange }: FitProps) {
   const sde = useSdePresets();
   const [user, setUser] = useState<ImplantSet[]>(userImplantSets);
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [setName, setSetName] = useState('');
   const slotOf = (id: number) => ds.attr(id, 'implantness') ?? undefined;
   const label = (s: ImplantSet) => {
     if (s.user || ds.lang !== 'zh') return s.name + (s.complete || s.user ? '' : ` (${s.members.length}/6)`);
@@ -182,13 +184,12 @@ function ImplantSets({ ds, fit, onChange }: FitProps) {
   };
   const all = [...user, ...sde.implant_sets];
   const apply = (id: string) => { const s = all.find((x) => x.id === id); if (s) onChange({ ...fit, implants: applyImplantSet(fit.implants, s, slotOf) }); };
-  const save = () => {
+  const save = (name: string) => {
     if (!fit.implants.length) return;
-    const name = prompt(t('Name for this implant set'), t('My implants'));
-    if (!name) return;
+    if (!name.trim()) return;
     const set: ImplantSet = { id: 'user:' + Math.random().toString(36).slice(2, 8), name, grade: null, complete: true, user: true,
       members: fit.implants.map((id) => ({ type_id: id, slot: slotOf(id) ?? 0 })) };
-    const next = [...user, set]; setUser(next); saveUserImplantSets(next);
+    const next = [...user, set]; setUser(next); saveUserImplantSets(next); setSaveOpen(false); setSetName('');
   };
   const delUser = (id: string) => { const next = user.filter((x) => x.id !== id); setUser(next); saveUserImplantSets(next); };
   if (!all.length && !fit.implants.length) return null;
@@ -199,7 +200,16 @@ function ImplantSets({ ds, fit, onChange }: FitProps) {
         {user.length > 0 && <optgroup label={t('Saved sets')}>{user.map((s) => <option key={s.id} value={s.id}>{label(s)}</option>)}</optgroup>}
         {sde.implant_sets.length > 0 && <optgroup label={t('Pirate / faction sets (SDE)')}>{sde.implant_sets.map((s) => <option key={s.id} value={s.id}>{label(s)}</option>)}</optgroup>}
       </select>
-      {fit.implants.length > 0 && <button className="mini saveset" onClick={save}>{t('Save implants as set')}</button>}
+      {fit.implants.length > 0 && <div className="popover-anchor">
+        <button className="mini saveset" onClick={() => { setSetName(t('My implants')); setSaveOpen(true); }}>{t('Save implants as set')}</button>
+        <Popover open={saveOpen} onClose={() => setSaveOpen(false)} className="implant-popover">
+          <form onSubmit={(e) => { e.preventDefault(); save(setName); }}>
+            <label>{t('Name for this implant set')}</label>
+            <input autoFocus value={setName} onChange={(e) => setSetName(e.target.value)} />
+            <button>{t('Save')}</button><button type="button" onClick={() => setSaveOpen(false)}>{t('Cancel')}</button>
+          </form>
+        </Popover>
+      </div>}
       {user.length > 0 && <select className="delset" value="" onChange={(e) => e.target.value && delUser(e.target.value)} title={t('Delete saved set')}>
         <option value="">{t('Delete saved set…')}</option>{user.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select>}
     </div>

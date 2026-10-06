@@ -1,5 +1,5 @@
 name: pages
-# Builds apps/web with the latest EX-CT/EXFA-Data dataset release and the EX-CT/EXFA-Engine WASM engines
+# Builds apps/web with the latest EX-CT/EXFA-Data dataset release and EXFA-Engine v0.2.0
 # (release downloads, no Rust builds), smoke-tests it in headless Chrome, runs the EXFA-Bench browser suites
 # against baselines/web.json, deploys to GitHub Pages.
 on:
@@ -9,14 +9,6 @@ on:
     inputs:
       dataset_tag:
         description: "EXFA-Data sde release tag (default: latest)"
-        required: false
-        default: ""
-      engine_tag:
-        description: "EXFA-Engine release tag (default: latest)"
-        required: false
-        default: ""
-      default_engine:
-        description: "default engine backend (wasm-worker | http); empty = repo variable DEFAULT_ENGINE or wasm-worker"
         required: false
         default: ""
   schedule:
@@ -38,8 +30,6 @@ jobs:
         working-directory: apps/web
     env:
       GH_TOKEN: ${{ github.token }}
-      # default engine backend of the site: dispatch input > repo variable DEFAULT_ENGINE > wasm-worker
-      DEFAULT_ENGINE: ${{ github.event.inputs.default_engine || vars.DEFAULT_ENGINE || 'wasm-worker' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -78,40 +68,27 @@ jobs:
             echo "PRICES_SNAPSHOT=$PTAG" >> "$GITHUB_ENV"
             echo "price snapshot: $PTAG" >> "$GITHUB_STEP_SUMMARY"
           fi
-      - name: Engine WASM + native binary from the EXFA-Engine release
-        # hard requirement: the wasm-worker backend (stats + graphs) and the formats module carry the site;
-        # a failed download fails the deploy
+      - name: Engine WASM v0.2.0
+        # The main WASM module handles calc, graph, price, and format RPCs.
         run: |
-          ETAG="${{ github.event.inputs.engine_tag }}"
-          [ -z "$ETAG" ] && ETAG=$(gh release view -R EX-CT/EXFA-Engine --json tagName --jq .tagName)
+          ETAG=v0.2.0
           mkdir -p public/engines/f dle
-          # exfa_wasm.wasm is the wasm32-unknown-unknown (freestanding, C-ABI) module the browser
-          # worker loads — NOT exfa-wasm32-wasip1.wasm, which needs WASI imports browsers can't provide
-          gh release download "$ETAG" -R EX-CT/EXFA-Engine -D dle -p exfa_wasm.wasm -p exfa_formats_wasm.wasm -p "exfa-${ETAG}-linux-x86_64.tar.gz" -p SHA256SUMS
+          gh release download "$ETAG" -R EX-CT/EXFA-Engine -D dle -p exfa_wasm.wasm -p SHA256SUMS
           (cd dle && sha256sum -c --ignore-missing SHA256SUMS)
           cp dle/exfa_wasm.wasm public/engines/f/exfa_wasm.wasm
-          cp dle/exfa_formats_wasm.wasm public/engines/f/exfa_formats_wasm.wasm
-          for w in exfa_wasm.wasm exfa_formats_wasm.wasm; do test -s "public/engines/f/$w" || { echo "engine module $w missing"; exit 1; }; done
-          # native exfa binary for the http-backend e2e (tools/engine-bridge.mjs); not deployed
-          tar xzf "dle/exfa-${ETAG}-linux-x86_64.tar.gz" -C dle
-          # the release ships LICENSE inside the per-platform tarballs, not as a standalone asset
-          cp "dle/exfa-${ETAG}-linux-x86_64/LICENSE" public/engines/f/ 2>/dev/null || true
-          EXFA_BIN=$(find dle -name exfa -type f | head -1); chmod +x "$EXFA_BIN"
-          cp "$EXFA_BIN" "$RUNNER_TEMP/exfa"
+          test -s public/engines/f/exfa_wasm.wasm
           # bench suite scripts (cap/run_cap.py etc.) need pyyaml
           pip install pyyaml
           { echo "ENGINE_RELEASE=$ETAG"; echo "ENGINE_RELEASE_URL=${{ github.server_url }}/EX-CT/EXFA-Engine/releases/tag/$ETAG"; } >> "$GITHUB_ENV"
           echo "engine: $ETAG" >> "$GITHUB_STEP_SUMMARY"
-      - name: Unit tests (vitest; formats layer against the release formats module)
+      - name: Unit tests (vitest)
         run: npm test
-        env: { REQUIRE_FORMATS_WASM: "1" }
       - name: Build info
         run: |
-          for w in exfa_wasm.wasm exfa_formats_wasm.wasm; do test -s "public/engines/f/$w" || { echo "engine module $w is missing: not deploying" | tee -a "$GITHUB_STEP_SUMMARY"; exit 1; }; done
-          echo "VITE_DEFAULT_ENGINE=$DEFAULT_ENGINE" >> "$GITHUB_ENV"
-          printf '{"dataset_tag":"%s","engine_release":"%s","engine_release_url":"%s","web":"%s","built_at":"%s","run":"%s","default_engine":"%s","prices_snapshot":"%s"}\n' \
+          test -s public/engines/f/exfa_wasm.wasm || { echo "engine module is missing: not deploying" | tee -a "$GITHUB_STEP_SUMMARY"; exit 1; }
+          printf '{"dataset_tag":"%s","engine_release":"%s","engine_release_url":"%s","web":"%s","built_at":"%s","run":"%s","prices_snapshot":"%s"}\n' \
             "$DATASET_TAG" "$ENGINE_RELEASE" "$ENGINE_RELEASE_URL" "${GITHUB_SHA::7}" "$(date -u +%FT%TZ)" \
-            "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" "$DEFAULT_ENGINE" "${PRICES_SNAPSHOT:-}" > public/build-info.json
+            "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" "${PRICES_SNAPSHOT:-}" > public/build-info.json
           cat public/build-info.json
       - run: npm run build
         env:
@@ -127,11 +104,6 @@ jobs:
           node tools/smoke.mjs http://127.0.0.1:4173/EXFA-App/ wasm-worker | tee -a "$GITHUB_STEP_SUMMARY"
           # wasm-worker e2e always gates the deploy
           node tools/e2e.mjs http://127.0.0.1:4173/EXFA-App/ wasm-worker | tee -a "$GITHUB_STEP_SUMMARY"
-          if [ -x "$RUNNER_TEMP/exfa" ]; then
-            node tools/engine-bridge.mjs --stdio "$RUNNER_TEMP/exfa serve-stdio" --port 8787 &
-            for i in $(seq 1 30); do curl -sf -o /dev/null http://127.0.0.1:8787/healthz && break; sleep 1; done
-            node tools/e2e.mjs "http://127.0.0.1:4173/EXFA-App/?http=http://127.0.0.1:8787" http | tee -a "$GITHUB_STEP_SUMMARY" || echo "http backend e2e failed" >> "$GITHUB_STEP_SUMMARY"
-          fi
         env: { CHROME: /usr/bin/google-chrome }
       - name: Bench full suite set in the browser build (wasm-worker; tools/run_all_suites.sh + check_no_regress.py vs baselines/web.json gate the deploy; EXFA-Bench @ EXFA-Engine bench.lock)
         # every suite of the bench's run_all_suites.sh, with tools/browser-engine.mjs as the engine binary

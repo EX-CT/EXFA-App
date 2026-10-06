@@ -1,7 +1,7 @@
 // Fit library: saved fits (persisted in IndexedDB, see store/library.ts) by folder or ship group, with search, tags,
 // rename / move / tag, duplicate, delete, bulk export (EFT, EVE XML), JSON backup / restore and imports of fit files
 // and Pyfa's saved-fits database (saveddata.db). Every import goes through the formats layer.
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { t } from '../i18n';
 import type { Dataset } from '../data/dataset';
 import type { Fit, Library } from '../fit/model';
@@ -13,7 +13,8 @@ import { exportFits, importFits, libraryFromStructured } from '../formats';
 import { importPyfaDb, isSqlite } from '../formats/pyfadb';
 import { saveUserImplantSets, userImplantSets } from '../data/sdePresets';
 import type { StoreStatus } from '../store';
-import { FloatMenu, TypeIcon } from './common';
+import { FloatMenu, InlineEdit, Popover, TypeIcon } from './common';
+import { notify } from './notify';
 
 const download = (name: string, text: string, type: string) => {
   const a = document.createElement('a');
@@ -32,12 +33,15 @@ export function FitBrowser({ ds, lib, activeId, status, onOpen, onLib, onInfo }:
   const [q, setQ] = useState('');
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
+  const libRef = useRef(lib); libRef.current = lib;
   const folders = useMemo(() => allFolders(lib), [lib]);
   const tags = useMemo(() => allTags(lib), [lib]);
   const [mode, setMode] = useState<'folder' | 'ship'>(() => (folders.length ? 'folder' : 'ship'));
   const [tag, setTag] = useState('');
   const [sel, setSel] = useState<string[]>([]);
   const [edit, setEdit] = useState<{ id: string; name: string; folder: string; tags: string } | null>(null);
+  const [folderRename, setFolderRename] = useState<string | null>(null);
+  const [popover, setPopover] = useState<{ kind: 'new' | 'move' | 'tags'; value: string } | null>(null);
   const [target, setTarget] = useState('');
   const fits = searchFits(ds, lib, q).filter((f) => !tag || (f.tags ?? []).includes(tag));
   const selected = sel.filter((id) => lib.fits[id]);
@@ -60,10 +64,49 @@ export function FitBrowser({ ds, lib, activeId, status, onOpen, onLib, onInfo }:
 
   const apply = (l: Library, note?: string) => { onLib(l); if (note) setMsg(note); };
   const remove = (ids: string[]) => {
-    if (!ids.length || !confirm(ids.length === 1 ? `${t('Delete fit')} "${lib.fits[ids[0]].name}"?` : `${t('Delete fits')}: ${ids.length}?`)) return;
-    apply(deleteFits(lib, ids), `${t('deleted')}: ${ids.length}`);
+    const removed = ids.map((id) => lib.fits[id]).filter((f): f is Fit => !!f);
+    if (!removed.length) return;
+    apply(deleteFits(lib, removed.map((f) => f.id)));
     setSel((s) => s.filter((x) => !ids.includes(x)));
-    if (activeId && ids.includes(activeId)) onOpen(null);
+    const activeWasRemoved = !!activeId && ids.includes(activeId);
+    if (activeWasRemoved) onOpen(null);
+    notify({ kind: 'ok', text: `${t('deleted')}: ${removed.length}`, action: { label: t('Undo'), onClick: () => {
+      const current = libRef.current;
+      onLib({ ...current, fits: { ...current.fits, ...Object.fromEntries(removed.map((f) => [f.id, f])) } });
+      setSel((s) => [...new Set([...s, ...removed.map((f) => f.id)])]);
+      if (activeWasRemoved && activeId) onOpen(activeId);
+    } } });
+  };
+  const removeFolder = (key: string) => {
+    const moved = Object.values(lib.fits).filter((f) => normFolder(f.folder) === key || normFolder(f.folder).startsWith(`${key}/`));
+    const previousFolders = lib.folders ?? [];
+    apply(deleteFolder(lib, key));
+    notify({ kind: 'ok', text: `${t('deleted')}: ${key}`, action: { label: t('Undo'), onClick: () => {
+      const current = libRef.current;
+      const fits = { ...current.fits };
+      for (const old of moved) if (fits[old.id]) fits[old.id] = { ...fits[old.id], folder: old.folder };
+      onLib({ ...current, fits, folders: [...new Set([...(current.folders ?? []), ...previousFolders])] });
+    } } });
+  };
+  const submitPopover = () => {
+    if (!popover) return;
+    const value = popover.value.trim();
+    if (popover.kind === 'tags') {
+      if (value) apply(tagFits(lib, selected, parseTags(value)));
+    } else {
+      const folder = normFolder(value);
+      if (folder) {
+        if (popover.kind === 'move') {
+          let next = moveFits(lib, selected, folder);
+          next = { ...next, folders: [...new Set([...(next.folders ?? []), folder])] };
+          apply(next);
+        } else {
+          apply({ ...lib, folders: [...new Set([...(lib.folders ?? []), folder])] });
+          setMode('folder');
+        }
+      }
+    }
+    setPopover(null);
   };
   const duplicate = (f: Fit) => { const c = duplicateFit(f, `${f.name} ${t('(copy)')}`); apply({ ...lib, fits: { ...lib.fits, [c.id]: c } }); onOpen(c.id); };
   const saveEdit = () => {
@@ -73,13 +116,15 @@ export function FitBrowser({ ds, lib, activeId, status, onOpen, onLib, onInfo }:
     l = updateFits(l, [edit.id], () => ({ tags: parseTags(edit.tags) }));
     apply(l); setEdit(null);
   };
-  const exportSel = (fmt: 'eft' | 'xml', fs: Fit[]) => {
+  const exportSel = async (fmt: 'eft' | 'xml', fs: Fit[]) => {
+    setBusy(true);
     try {
-      const text = exportFits(ds, fs, lib, fmt);
+      const text = await exportFits(ds, fs, lib, fmt);
       download(`exfa-fits-${today()}.${fmt === 'eft' ? 'txt' : 'xml'}`, text, fmt === 'eft' ? 'text/plain' : 'application/xml');
       (window as any).__lastLibraryExport = { format: fmt, fits: fs.length, text };
       setMsg(`${t('exported')}: ${fs.length} (${fmt.toUpperCase()})`);
     } catch (e) { setMsg((e as Error).message); }
+    finally { setBusy(false); }
   };
   const backup = () => {
     const text = JSON.stringify(makeBackup(lib, userImplantSets()), null, 1);
@@ -122,7 +167,7 @@ export function FitBrowser({ ds, lib, activeId, status, onOpen, onLib, onInfo }:
           notes.push(`${file.name}: ${t('backup')}, ${m.added.length} ${t('fit(s)')}`);
           continue;
         }
-        const r = importFits(ds, text, 'auto', file.name);
+      const r = await importFits(ds, text, 'auto', file.name);
         const now = new Date().toISOString();
         const fs = r.fits.map((f) => ({ ...f, folder: normFolder(target), created: now, modified: now }));
         const m = mergeLibrary(l, { fits: Object.fromEntries(fs.map((f) => [f.id, f])), folders: target ? [normFolder(target)] : [] });
@@ -186,10 +231,14 @@ export function FitBrowser({ ds, lib, activeId, status, onOpen, onLib, onInfo }:
       <datalist id="lib-folders">{folders.map((p) => <option key={p} value={p} />)}</datalist>
       {groups.map(([key, label, fs]) => (
         <details key={(mode === 'folder' ? 'd:' : 'g:') + key} open className={mode === 'folder' ? 'lib-folder' : 'lib-group'} data-folder={mode === 'folder' ? key : undefined}>
-          <summary>{mode === 'folder' && key.includes('/') ? <span className="muted">{key.slice(0, key.lastIndexOf('/') + 1)}</span> : null}{mode === 'folder' && key.includes('/') ? key.slice(key.lastIndexOf('/') + 1) : label} <span className="muted">({fs.length})</span>
+          <summary>{folderRename === key
+            ? <span className="folder-inline" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+                <InlineEdit value={key} placeholder={t('Rename folder')} onCommit={(to) => { apply(renameFolder(lib, key, to)); setFolderRename(null); }} />
+              </span>
+            : <>{mode === 'folder' && key.includes('/') ? <span className="muted">{key.slice(0, key.lastIndexOf('/') + 1)}</span> : null}{mode === 'folder' && key.includes('/') ? key.slice(key.lastIndexOf('/') + 1) : label}</>} <span className="muted">({fs.length})</span>
             {mode === 'folder' && key && <span className="right">
-              <button className="mini lib-folder-rename" title={t('Rename folder')} onClick={(e) => { e.preventDefault(); const to = prompt(t('Rename folder'), key); if (to != null) apply(renameFolder(lib, key, to)); }}>✎</button>
-              <button className="mini lib-folder-del" title={t('Delete folder (fits move to the parent folder)')} onClick={(e) => { e.preventDefault(); apply(deleteFolder(lib, key)); }}>✕</button>
+              <button className="mini lib-folder-rename" title={t('Rename folder')} onClick={(e) => { e.preventDefault(); setFolderRename(key); }}>✎</button>
+              <button className="mini lib-folder-del" title={t('Delete folder (fits move to the parent folder)')} onClick={(e) => { e.preventDefault(); removeFolder(key); }}>✕</button>
             </span>}
           </summary>
           <ul className="fits">{sortFits(fs).map(fitRow)}</ul>
@@ -199,11 +248,29 @@ export function FitBrowser({ ds, lib, activeId, status, onOpen, onLib, onInfo }:
       {selected.length > 0 && (
         <div className="row lib-bulk">
           <span className="muted">{t('selected')}: {selected.length}</span>
-          <select className="lib-move" value="" onChange={(e) => { const v = e.target.value; if (v === '') return; const to = v === '\u0000new' ? prompt(t('New folder')) : v === '\u0000root' ? '' : v; if (to != null) apply(moveFits(lib, selected, to)); }}>
-            <option value="">{t('move to…')}</option><option value={'\u0000root'}>{t('(no folder)')}</option>
-            {folders.map((p) => <option key={p} value={p}>{p}</option>)}<option value={'\u0000new'}>{t('new folder…')}</option>
-          </select>
-          <button className="lib-tag-add" onClick={() => { const v = prompt(t('Add tags (comma separated)')); if (v) apply(tagFits(lib, selected, parseTags(v))); }}>+ {t('tag')}</button>
+          <div className="popover-anchor">
+            <select className="lib-move" value="" onChange={(e) => { const v = e.target.value; if (v === '\u0000new') setPopover({ kind: 'move', value: '' }); else if (v === '\u0000root') apply(moveFits(lib, selected, '')); else if (v) apply(moveFits(lib, selected, v)); }}>
+              <option value="">{t('move to…')}</option><option value={'\u0000root'}>{t('(no folder)')}</option>
+              {folders.map((p) => <option key={p} value={p}>{p}</option>)}<option value={'\u0000new'}>{t('new folder…')}</option>
+            </select>
+            <Popover open={popover?.kind === 'move'} onClose={() => setPopover(null)} className="library-popover">
+              <form onSubmit={(e) => { e.preventDefault(); submitPopover(); }}>
+                <label>{t('New folder')}</label>
+                <input autoFocus value={popover?.kind === 'move' ? popover.value : ''} placeholder={t('folder (a/b)')} onChange={(e) => setPopover((p) => p?.kind === 'move' ? { ...p, value: e.target.value } : p)} />
+                <button>{t('Move')}</button><button type="button" onClick={() => setPopover(null)}>{t('Cancel')}</button>
+              </form>
+            </Popover>
+          </div>
+          <div className="popover-anchor">
+            <button className="lib-tag-add" onClick={() => setPopover({ kind: 'tags', value: '' })}>+ {t('tag')}</button>
+            <Popover open={popover?.kind === 'tags'} onClose={() => setPopover(null)} className="library-popover">
+              <form onSubmit={(e) => { e.preventDefault(); submitPopover(); }}>
+                <label>{t('Add tags (comma separated)')}</label>
+                <input autoFocus value={popover?.kind === 'tags' ? popover.value : ''} placeholder={t('tags, comma separated')} onChange={(e) => setPopover((p) => p?.kind === 'tags' ? { ...p, value: e.target.value } : p)} />
+                <button>{t('Add')}</button><button type="button" onClick={() => setPopover(null)}>{t('Cancel')}</button>
+              </form>
+            </Popover>
+          </div>
           {tag && <button className="lib-tag-remove" onClick={() => apply(tagFits(lib, selected, [], [tag]))}>− #{tag}</button>}
           <button className="lib-export-eft" onClick={() => exportSel('eft', selFits)}>{t('Export EFT')}</button>
           <button className="lib-export-xml" onClick={() => exportSel('xml', selFits)}>{t('Export XML')}</button>
@@ -212,7 +279,16 @@ export function FitBrowser({ ds, lib, activeId, status, onOpen, onLib, onInfo }:
         </div>
       )}
       <div className="row lib-actions">
-        <button className="lib-newfolder" onClick={() => { const p = prompt(t('New folder')); if (p && normFolder(p)) { apply({ ...lib, folders: [...new Set([...(lib.folders ?? []), normFolder(p)])] }); setMode('folder'); } }}>+ {t('folder')}</button>
+        <div className="popover-anchor">
+          <button className="lib-newfolder" onClick={() => setPopover({ kind: 'new', value: '' })}>+ {t('folder')}</button>
+          <Popover open={popover?.kind === 'new'} onClose={() => setPopover(null)} className="library-popover">
+            <form onSubmit={(e) => { e.preventDefault(); submitPopover(); }}>
+              <label>{t('New folder')}</label>
+              <input autoFocus value={popover?.kind === 'new' ? popover.value : ''} placeholder={t('folder (a/b)')} onChange={(e) => setPopover((p) => p?.kind === 'new' ? { ...p, value: e.target.value } : p)} />
+              <button>{t('Create')}</button><button type="button" onClick={() => setPopover(null)}>{t('Cancel')}</button>
+            </form>
+          </Popover>
+        </div>
         <button className="lib-backup" onClick={backup} title={t('Download all fits, characters and profiles as JSON')}>{t('Backup library')}</button>
         <button className="lib-backup-xml" disabled={!Object.keys(lib.fits).length} onClick={() => exportSel('xml', sortFits(Object.values(lib.fits)))} title={t('All fits as one EVE XML file (like Pyfa’s backup)')}>{t('Export all (XML)')}</button>
       </div>

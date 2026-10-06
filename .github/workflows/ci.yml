@@ -5,7 +5,7 @@ on:
   pull_request:
 jobs:
   web:
-    # apps/web: typecheck + vite build + vitest (formats WASM from the latest EXFA-Engine release)
+    # apps/web: typecheck + vite build + vitest with the pinned Engine WASM.
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
@@ -14,17 +14,16 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: "22", cache: npm }
       - run: npm ci
-      - name: Formats WASM from the latest EXFA-Engine release
+      - name: Engine WASM v0.2.0
         run: |
           mkdir -p apps/web/public/engines/f
-          gh release download -R EX-CT/EXFA-Engine -D dl -p exfa_formats_wasm.wasm
-          cp dl/exfa_formats_wasm.wasm apps/web/public/engines/f/
+          gh release download v0.2.0 -R EX-CT/EXFA-Engine -D dl -p exfa_wasm.wasm
+          cp dl/exfa_wasm.wasm apps/web/public/engines/f/
       - name: Lint (oxlint; warnings tolerated — migrated code carries pre-existing warnings, the old repo ran no lint gate)
         run: npx oxlint -c .oxlintrc.json
         working-directory: apps/web
       - run: npm run build -w apps/web
       - run: npm test -w apps/web
-        env: { REQUIRE_FORMATS_WASM: "1" }
   mcp:
     # packages/mcp: unit tests (engine/dataset-backed suites skip themselves without EXFA_ENGINE_BIN)
     runs-on: ubuntu-latest
