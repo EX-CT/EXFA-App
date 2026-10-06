@@ -13,7 +13,7 @@ import { exportFits, importFits, libraryFromStructured } from '../formats';
 import { importPyfaDb, isSqlite } from '../formats/pyfadb';
 import { saveUserImplantSets, userImplantSets } from '../data/sdePresets';
 import type { StoreStatus } from '../store';
-import { TypeIcon } from './common';
+import { FloatMenu, TypeIcon } from './common';
 
 const download = (name: string, text: string, type: string) => {
   const a = document.createElement('a');
@@ -25,9 +25,9 @@ const STORE_LABEL: Record<string, string> = { indexeddb: 'IndexedDB', localstora
 
 export const PYFA_FOLDER = 'Pyfa import';
 
-export function FitBrowser({ ds, lib, activeId, status, onOpen, onLib }: {
+export function FitBrowser({ ds, lib, activeId, status, onOpen, onLib, onInfo }: {
   ds: Dataset; lib: Library; activeId: string | null; status: StoreStatus;
-  onOpen: (id: string | null) => void; onLib: (l: Library) => void;
+  onOpen: (id: string | null) => void; onLib: (l: Library) => void; onInfo?: (id: number) => void;
 }) {
   const [q, setQ] = useState('');
   const [msg, setMsg] = useState('');
@@ -136,8 +136,11 @@ export function FitBrowser({ ds, lib, activeId, status, onOpen, onLib }: {
     setBusy(false);
   };
 
+  const [fmenu, setFmenu] = useState<{ x: number; y: number; f: Fit } | null>(null);
+
   const fitRow = (f: Fit) => (
-    <li key={f.id} className={'lib-fit' + (f.id === activeId ? ' on' : '')} data-fit-id={f.id} data-fit-name={f.name} onClick={() => onOpen(f.id)}>
+    <li key={f.id} className={'lib-fit' + (f.id === activeId ? ' on' : '')} data-fit-id={f.id} data-fit-name={f.name} onClick={() => onOpen(f.id)}
+      onContextMenu={(e) => { e.preventDefault(); setFmenu({ x: e.clientX, y: e.clientY, f }); }}>
       <input type="checkbox" className="lib-sel" checked={selected.includes(f.id)} onClick={(e) => e.stopPropagation()} onChange={(e) => setSel((s) => (e.target.checked ? [...s, f.id] : s.filter((x) => x !== f.id)))} />
       {edit?.id === f.id ? (
         <span className="lib-edit" onClick={(e) => e.stopPropagation()}>
@@ -160,6 +163,16 @@ export function FitBrowser({ ds, lib, activeId, status, onOpen, onLib }: {
 
   return (
     <div className="fitbrowser">
+      {fmenu && (
+        <FloatMenu x={fmenu.x} y={fmenu.y} onClose={() => setFmenu(null)}>
+          <div className="ctxhead">{fmenu.f.name}</div>
+          <button onClick={() => { onOpen(fmenu.f.id); setFmenu(null); }}>{t('Open')}</button>
+          {onInfo && <button onClick={() => { onInfo(fmenu.f.ship_type_id); setFmenu(null); }}>{t('Show info')}</button>}
+          <button onClick={() => { setEdit({ id: fmenu.f.id, name: fmenu.f.name, folder: fmenu.f.folder ?? '', tags: (fmenu.f.tags ?? []).join(', ') }); setFmenu(null); }}>{t('Rename / move / tags')}</button>
+          <button onClick={() => { duplicate(fmenu.f); setFmenu(null); }}>{t('Duplicate')}</button>
+          <button className="danger" onClick={() => { remove([fmenu.f.id]); setFmenu(null); }}>{t('Delete')}</button>
+        </FloatMenu>
+      )}
       <div className="row lib-head">
         <span className="lib-status muted small" data-kind={status.kind} data-fits={status.fits} data-saves={status.saves} title={status.note ?? status.error ?? ''}>
           {Object.keys(lib.fits).length} {t('fit(s)')} · {t(STORE_LABEL[status.kind] ?? status.kind)}{status.error ? ` · ${status.error}` : ''}{status.migrated ? ` · ${t('migrated from localStorage')}: ${status.migrated}` : ''}

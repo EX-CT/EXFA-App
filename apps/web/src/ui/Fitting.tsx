@@ -5,7 +5,7 @@ import type { InfoCtx } from './Market';
 import type { Dataset, Slot } from '../data/dataset';
 import { addItemToFit, draggedType, moveModule, type Fit, type FitModule, type Library, type ModState } from '../fit/model';
 import type { FitStats } from '../engine/adapter';
-import { fmt, Tabs, TypeIcon } from './common';
+import { FloatMenu, fmt, Tabs, TypeIcon } from './common';
 import { applyImplantSet, saveUserImplantSets, useSdePresets, userImplantSets, type ImplantSet } from '../data/sdePresets';
 
 const SLOTS: [Slot, string][] = [['high', 'High slots'], ['mid', 'Mid slots'], ['low', 'Low slots'], ['rig', 'Rigs'], ['subsystem', 'Subsystems'], ['service', 'Services']];
@@ -36,15 +36,8 @@ function CtxMenu({ x, y, ds, m, vars, nIdentical, grouped, onGroup, onInfo, onCh
   x: number; y: number; ds: Dataset; m: FitModule; vars: number[]; nIdentical?: number; grouped?: boolean; onGroup?: () => void;
   onInfo: (id: number, ctx?: InfoCtx) => void; onChange: (p: Partial<FitModule>) => void; onRemove: () => void; onClose: () => void;
 }) {
-  useEffect(() => {
-    // Defer attaching outside-close listeners: events from the same gesture that opened the menu
-    // (contextmenu + following click/auxclick in some browsers) must not close it instantly.
-    const close = () => onClose();
-    const id = setTimeout(() => { window.addEventListener('mousedown', close); window.addEventListener('contextmenu', close); }, 0);
-    return () => { clearTimeout(id); window.removeEventListener('mousedown', close); window.removeEventListener('contextmenu', close); };
-  }, [onClose]);
   return (
-    <div className="ctxmenu" style={{ left: x, top: y }} onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}>
+    <FloatMenu x={x} y={y} onClose={onClose}>
       <div className="ctxhead">{ds.name(m.type_id)}</div>
       <button onClick={() => { onInfo(m.type_id); onClose(); }}>{t('Show info')}</button>
       {(nIdentical ?? 0) > 1 && <button onClick={() => { onGroup!(); onClose(); }}>⛓ {t('Group identical modules')} (×{nIdentical})</button>}
@@ -60,7 +53,7 @@ function CtxMenu({ x, y, ds, m, vars, nIdentical, grouped, onGroup, onInfo, onCh
         {STATES.map((s) => <button key={s} className={s === m.state ? 'on' : ''} onClick={() => { onChange({ state: s }); onClose(); }}>{STATE_ICON[s]} {t(s)}</button>)}
       </div>
       <button className="danger" onClick={() => { onRemove(); onClose(); }}>{t('Remove')}</button>
-    </div>
+    </FloatMenu>
   );
 }
 
@@ -218,16 +211,25 @@ function Bays(p: FitProps) {
   const dehp = (i: number) => ehpTotal(p.stats?.drones?.items?.find((x: any) => x.drone_index === i));
   const fehp = (i: number) => ehpTotal(p.stats?.fighters?.items?.find((x: any) => x.fighter_index === i));
   const rm = <K extends 'drones' | 'fighters' | 'implants' | 'boosters' | 'cargo'>(k: K, i: number) => onChange({ ...fit, [k]: (fit[k] as unknown[]).filter((_, j) => j !== i) });
+  const [bm, setBm] = useState<{ x: number; y: number; id: number; del: () => void } | null>(null);
+  const rowCtx = (e: React.MouseEvent, id: number, del: () => void) => { e.preventDefault(); setBm({ x: e.clientX, y: e.clientY, id, del }); };
   return (
     <>
+      {bm && (
+        <FloatMenu x={bm.x} y={bm.y} onClose={() => setBm(null)}>
+          <div className="ctxhead">{ds.name(bm.id)}</div>
+          <button onClick={() => { onInfo(bm.id); setBm(null); }}>{t('Show info')}</button>
+          <button className="danger" onClick={() => { bm.del(); setBm(null); }}>{t('Remove')}</button>
+        </FloatMenu>
+      )}
       {fit.drones.length > 0 && <div className="bay"><h4>{t('Drones')}</h4>{fit.drones.map((d, i) => (
-        <div className="mod" key={i}><TypeIcon id={d.type_id} size={18} /><span className="mname" onClick={() => onInfo(d.type_id, { drone: i })}>{ds.name(d.type_id)}</span>
+        <div className="mod" key={i} onContextMenu={(e) => rowCtx(e, d.type_id, () => rm('drones', i))}><TypeIcon id={d.type_id} size={18} /><span className="mname" onClick={() => onInfo(d.type_id, { drone: i })}>{ds.name(d.type_id)}</span>
           <span>{t('qty')} <Qty value={d.quantity} min={1} onChange={(v) => onChange({ ...fit, drones: fit.drones.map((x, j) => (j === i ? { ...x, quantity: v, active: Math.min(x.active, v) } : x)) })} /></span>
           <span>{t('active')} <Qty value={d.active} max={d.quantity} onChange={(v) => onChange({ ...fit, drones: fit.drones.map((x, j) => (j === i ? { ...x, active: v } : x)) })} /></span>
           {dehp(i) != null && <span className="muted dehp" title={t('EHP of one drone (damage pattern of the fit)')}>{Math.round(dehp(i)!)} EHP</span>}
           <button className="mini" onClick={() => rm('drones', i)}>✕</button></div>))}</div>}
       {fit.fighters.length > 0 && <div className="bay"><h4>{t('Fighters')}</h4>{fit.fighters.map((f, i) => (
-        <div className="mod" key={i}><TypeIcon id={f.type_id} size={18} /><span className="mname" onClick={() => onInfo(f.type_id)}>{ds.name(f.type_id)}</span>
+        <div className="mod" key={i} onContextMenu={(e) => rowCtx(e, f.type_id, () => rm('fighters', i))}><TypeIcon id={f.type_id} size={18} /><span className="mname" onClick={() => onInfo(f.type_id)}>{ds.name(f.type_id)}</span>
           <span>{t('squadron')} <Qty value={f.quantity} min={1} onChange={(v) => onChange({ ...fit, fighters: fit.fighters.map((x, j) => (j === i ? { ...x, quantity: v } : x)) })} /></span>
           <label><input type="checkbox" checked={f.active} onChange={(e) => onChange({ ...fit, fighters: fit.fighters.map((x, j) => (j === i ? { ...x, active: e.target.checked } : x)) })} /> {t('launched')}</label>
           {fehp(i) != null && <span className="muted fehp" title={t('EHP of one fighter (damage pattern of the fit)')}>{Math.round(fehp(i)!)} EHP</span>}
@@ -243,8 +245,8 @@ function Bays(p: FitProps) {
           })}</div></div>))}</div>}
       <ImplantSets {...p} />
       {(fit.implants.length > 0 || fit.boosters.length > 0) && <div className="bay"><h4>{t('Implants & boosters')}</h4>
-        {fit.implants.map((t, i) => <div className="mod" key={'i' + i}><TypeIcon id={t} size={18} /><span className="mname" onClick={() => onInfo(t)}>{ds.name(t)}</span><span className="muted">{tr('slot')} {ds.attr(t, 'implantness') ?? '?'}</span><button className="mini" onClick={() => rm('implants', i)}>✕</button></div>)}
-        {fit.boosters.map((b, i) => <div className="mod" key={'b' + i}><TypeIcon id={b.type_id} size={18} /><span className="mname" onClick={() => onInfo(b.type_id)}>{ds.name(b.type_id)}</span><span className="muted">{t('booster slot')} {ds.attr(b.type_id, 'boosterness') ?? '?'}</span><button className="mini" onClick={() => rm('boosters', i)}>✕</button>
+        {fit.implants.map((t, i) => <div className="mod" key={'i' + i} onContextMenu={(e) => rowCtx(e, t, () => rm('implants', i))}><TypeIcon id={t} size={18} /><span className="mname" onClick={() => onInfo(t)}>{ds.name(t)}</span><span className="muted">{tr('slot')} {ds.attr(t, 'implantness') ?? '?'}</span><button className="mini" onClick={() => rm('implants', i)}>✕</button></div>)}
+        {fit.boosters.map((b, i) => <div className="mod" key={'b' + i} onContextMenu={(e) => rowCtx(e, b.type_id, () => rm('boosters', i))}><TypeIcon id={b.type_id} size={18} /><span className="mname" onClick={() => onInfo(b.type_id)}>{ds.name(b.type_id)}</span><span className="muted">{t('booster slot')} {ds.attr(b.type_id, 'boosterness') ?? '?'}</span><button className="mini" onClick={() => rm('boosters', i)}>✕</button>
           <div className="subopts">{ds.boosterSideEffects(b.type_id).map((se) => {
             const on = (b.side_effects ?? []).includes(se.effect);
             const toggle = () => onChange({ ...fit, boosters: fit.boosters.map((x, j) => (j === i ? { ...x, side_effects: on ? (x.side_effects ?? []).filter((e) => e !== se.effect) : [...(x.side_effects ?? []), se.effect] } : x)) });
@@ -252,7 +254,7 @@ function Bays(p: FitProps) {
           })}</div></div>)}
       </div>}
       {fit.cargo.length > 0 && <div className="bay"><h4>{t('Cargo')}</h4>{fit.cargo.map((c, i) => (
-        <div className="mod" key={i}><span className="mname" onClick={() => onInfo(c.type_id)}>{ds.name(c.type_id)}</span>
+        <div className="mod" key={i} onContextMenu={(e) => rowCtx(e, c.type_id, () => rm('cargo', i))}><TypeIcon id={c.type_id} size={18} /><span className="mname" onClick={() => onInfo(c.type_id)}>{ds.name(c.type_id)}</span>
           <span>x <Qty value={c.quantity} min={1} max={1e6} onChange={(v) => onChange({ ...fit, cargo: fit.cargo.map((x, j) => (j === i ? { ...x, quantity: v } : x)) })} /></span>
           <button className="mini" onClick={() => rm('cargo', i)}>✕</button></div>))}</div>}
     </>
@@ -266,13 +268,21 @@ function Projected(p: FitProps & { addProjected: boolean; setAddProjected: (b: b
   const [pf, setPf] = useState('');
   const [bf, setBf] = useState('');
   const setP = (i: number, patch: object) => onChange({ ...fit, projected: fit.projected.map((x, j) => (j === i ? { ...x, ...patch } : x)) });
+  const [pm, setPm] = useState<{ x: number; y: number; id: number | null; del: () => void } | null>(null);
   return (
     <div>
+      {pm && (
+        <FloatMenu x={pm.x} y={pm.y} onClose={() => setPm(null)}>
+          <div className="ctxhead">{pm.id ? ds.name(pm.id) : t('Projected fit')}</div>
+          {pm.id != null && <button onClick={() => { onInfo(pm.id!); setPm(null); }}>{t('Show info')}</button>}
+          <button className="danger" onClick={() => { pm.del(); setPm(null); }}>{t('Remove')}</button>
+        </FloatMenu>
+      )}
       <label className="toggle"><input type="checkbox" checked={p.addProjected} onChange={(e) => p.setAddProjected(e.target.checked)} /> {t('add items from the market as')} <b>{t('projected onto this fit')}</b></label>
       <h4>{t('Projected onto this fit')}</h4>
       {fit.projected.length === 0 && <p className="muted">{t('Nothing projected. Turn on the toggle above and pick webs, paints, neuts, remote reps, drones… or project a saved fit.')}</p>}
       {fit.projected.map((x, i) => (
-        <div className="mod" key={i}>
+        <div className="mod" key={i} onContextMenu={(e) => { e.preventDefault(); setPm({ x: e.clientX, y: e.clientY, id: x.type_id ?? null, del: () => onChange({ ...fit, projected: fit.projected.filter((_, j) => j !== i) }) }); }}>
           <span className="mname" onClick={() => x.type_id && onInfo(x.type_id)}>{x.kind === 'fit' ? `${t('Fit')}: ${lib.fits[x.fit_id!]?.name ?? t('(deleted)')}` : ds.name(x.type_id!)}</span>
           <span>×<Qty value={x.amount} min={1} max={50} onChange={(v) => setP(i, { amount: v })} /></span>
           <span>{t('at')} <input className="qty wide" type="number" min={0} step={500} value={x.distance_m ?? ''} placeholder={t('any')} onChange={(e) => setP(i, { distance_m: e.target.value === '' ? null : +e.target.value })} /> m</span>
@@ -326,6 +336,8 @@ export function Fitting(p: FitProps & { addProjected: boolean; setAddProjected: 
   const { ds, fit, lib, stats, onChange } = p;
   const [tab, setTab] = useState<'fit' | 'proj' | 'opts'>('fit');
   const [menu, setMenu] = useState<{ i: number; x: number; y: number } | null>(null);
+  const [shipMenu, setShipMenu] = useState<{ x: number; y: number } | null>(null);
+  const shipVars = ds.variations(fit.ship_type_id);
   const modes = ds.skills.length ? Object.entries(ds.raw.types).filter(([, t]) => t.group === 1306 && t.name.startsWith(ds.name(fit.ship_type_id, 'en') + ' ')).map(([k]) => +k) : [];
   // Pyfa: dropping a market item anywhere on the fitting canvas adds it to its natural slot/bay
   // (a charge dropped on a module row is handled by the row itself).
@@ -343,7 +355,19 @@ export function Fitting(p: FitProps & { addProjected: boolean; setAddProjected: 
   return (
     <div className="fitting" {...dropItem}>
       <div className="fithead">
-        <span className="ship" onClick={() => p.onInfo(fit.ship_type_id, { ship: true })}>{ds.name(fit.ship_type_id)}</span>
+        <span className="ship" onClick={() => p.onInfo(fit.ship_type_id, { ship: true })} onContextMenu={(e) => { e.preventDefault(); setShipMenu({ x: e.clientX, y: e.clientY }); }}>{ds.name(fit.ship_type_id)}</span>
+        {shipMenu && (
+          <FloatMenu x={shipMenu.x} y={shipMenu.y} onClose={() => setShipMenu(null)}>
+            <div className="ctxhead">{ds.name(fit.ship_type_id)}</div>
+            <button onClick={() => { p.onInfo(fit.ship_type_id, { ship: true }); setShipMenu(null); }}>{t('Show info')}</button>
+            {shipVars.length > 1 && (
+              <div className="ctxgroup">
+                <div className="ctxlabel">{t('Change ship')}</div>
+                {shipVars.map((v) => <button key={v} className={v === fit.ship_type_id ? 'on' : ''} onClick={() => { onChange({ ...fit, ship_type_id: v }); setShipMenu(null); }}>{ds.name(v)}</button>)}
+              </div>
+            )}
+          </FloatMenu>
+        )}
         <input value={fit.name} onChange={(e) => onChange({ ...fit, name: e.target.value })} />
         {modes.length > 0 && (
           <select value={fit.mode_type_id ?? ''} onChange={(e) => onChange({ ...fit, mode_type_id: e.target.value ? +e.target.value : null })}>

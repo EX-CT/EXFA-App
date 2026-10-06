@@ -213,4 +213,5 @@ export const ZH: Record<string, string> = {
   'updated snapshot': '更新的快照',
   'value must be a number >= 0': '数值必须 ≥ 0',
   'Price snapshot for "update prices"': '“更新价格”使用的价格快照',
+  'Add to fit': '加入装配', Open: '打开', 'Change ship': '更换舰船', 'Projected fit': '投影的装配',
 };

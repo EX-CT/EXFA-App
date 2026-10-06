@@ -3,7 +3,7 @@ import { t as tr } from '../i18n';
 import type { Dataset, Kind } from '../data/dataset';
 import type { Engine } from '../engine/adapter';
 import { draggedType } from '../fit/model';
-import { TypeIcon } from './common';
+import { FloatMenu, TypeIcon } from './common';
 
 const KIND_FILTERS: [string, Kind[] | null][] = [
   ['All', null], ['Ships', ['ship', 'structure']], ['Modules', ['module', 'subsystem']], ['Charges', ['charge']],
@@ -30,9 +30,18 @@ function Node({ ds, id, onPick, onInfo, depth }: { ds: Dataset; id: number; onPi
 export function TypeRowView({ ds, id, onPick, onInfo, depth = 0 }: { ds: Dataset; id: number; onPick: (t: number) => void; onInfo: (t: number) => void; depth?: number }) {
   const slot = ds.slot(id);
   const ml = ds.type(id)?.meta_level;
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   return (
     <li className="trow" style={{ paddingLeft: depth * 12 + 10 }} onDoubleClick={() => onPick(id)} title={tr('double-click to add, or drag onto the fitting')}
+      onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY }); }}
       draggable onDragStart={(e) => { draggedType.id = id; e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('application/x-exfa-type', String(id)); e.dataTransfer.setData('text/plain', `type:${id}`); }} onDragEnd={() => { draggedType.id = null; }}>
+      {menu && (
+        <FloatMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)}>
+          <div className="ctxhead">{ds.name(id)}</div>
+          <button onClick={() => { onInfo(id); setMenu(null); }}>{tr('Show info')}</button>
+          <button onClick={() => { onPick(id); setMenu(null); }}>{tr('Add to fit')}</button>
+        </FloatMenu>
+      )}
       <TypeIcon id={id} size={20} />
       <span className={'kind k-' + ds.kind(id)}>{tr(slot ?? ds.kind(id))}</span>
       <span className="tname" onClick={() => onPick(id)}>{ds.name(id)}</span>

@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { t } from '../i18n';
 
 /** Item icon from CCP's image CDN (images.evetech.net, no auth). Ships/structures get the
@@ -31,6 +31,22 @@ export function Section({ title, children, right }: { title: string; children: R
       <h3>{title}{right && <span className="right">{right}</span>}</h3>
       {children}
     </section>
+  );
+}
+
+/** Floating right-click menu shell. Outside-close listeners attach one tick after mount so the
+ *  gesture that opened the menu (and its trailing click/auxclick in some browsers) can't close it.
+ *  Native context menu is suppressed globally in main.tsx. */
+export function FloatMenu({ x, y, onClose, children }: { x: number; y: number; onClose: () => void; children: ReactNode }) {
+  useEffect(() => {
+    const close = () => onClose();
+    const id = setTimeout(() => { window.addEventListener('mousedown', close); window.addEventListener('contextmenu', close); }, 0);
+    return () => { clearTimeout(id); window.removeEventListener('mousedown', close); window.removeEventListener('contextmenu', close); };
+  }, [onClose]);
+  return (
+    <div className="ctxmenu" style={{ left: x, top: y }} onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}>
+      {children}
+    </div>
   );
 }
 
