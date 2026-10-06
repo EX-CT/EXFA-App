@@ -37,12 +37,14 @@ function CtxMenu({ x, y, ds, m, vars, nIdentical, grouped, onGroup, onInfo, onCh
   onInfo: (id: number, ctx?: InfoCtx) => void; onChange: (p: Partial<FitModule>) => void; onRemove: () => void; onClose: () => void;
 }) {
   useEffect(() => {
+    // Defer attaching outside-close listeners: events from the same gesture that opened the menu
+    // (contextmenu + following click/auxclick in some browsers) must not close it instantly.
     const close = () => onClose();
-    window.addEventListener('click', close); window.addEventListener('contextmenu', close);
-    return () => { window.removeEventListener('click', close); window.removeEventListener('contextmenu', close); };
+    const id = setTimeout(() => { window.addEventListener('mousedown', close); window.addEventListener('contextmenu', close); }, 0);
+    return () => { clearTimeout(id); window.removeEventListener('mousedown', close); window.removeEventListener('contextmenu', close); };
   }, [onClose]);
   return (
-    <div className="ctxmenu" style={{ left: x, top: y }} onClick={(e) => e.stopPropagation()} onContextMenu={(e) => e.preventDefault()}>
+    <div className="ctxmenu" style={{ left: x, top: y }} onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}>
       <div className="ctxhead">{ds.name(m.type_id)}</div>
       <button onClick={() => { onInfo(m.type_id); onClose(); }}>{t('Show info')}</button>
       {(nIdentical ?? 0) > 1 && <button onClick={() => { onGroup!(); onClose(); }}>⛓ {t('Group identical modules')} (×{nIdentical})</button>}
@@ -104,6 +106,7 @@ function ModuleRow({ ds, m, idx, grp, fit, stats, onChange, onInfo, menu, setMen
         if (dragFrom != null) { e.preventDefault(); onChange(moveModule(fit, dragFrom, idx)); dragFrom = null; }
       }}>
       {menu?.i === idx && <CtxMenu x={menu.x} y={menu.y} ds={ds} m={m} vars={ds.variations(m.type_id)} nIdentical={nIdentical} grouped={!!grp} onGroup={groupIdentical} onInfo={onInfo} onChange={set} onRemove={remove} onClose={() => setMenu(null)} />}
+
       <button className={'state s-' + m.state} onClick={() => cycle(1)} title={`${t(m.state)} (${t('click: next state')})`}>{STATE_ICON[m.state]}</button>
       <TypeIcon id={m.mutation?.base_type_id ?? m.type_id} size={18} />
       <span className="mname" onClick={() => onInfo(m.type_id, { module: idx })}>{grp && <b className="gcount" title={t('grouped modules')}>×{grp.length} </b>}{ds.name(m.type_id)}{m.mutation ? ' ✦' : ''}</span>
@@ -133,6 +136,7 @@ function ModuleRow({ ds, m, idx, grp, fit, stats, onChange, onInfo, menu, setMen
         {dpsTotal != null && dpsTotal > 0 && <span className="mc dps" title={t('damage per second')}>{dpsTotal.toFixed(1) + ' dps'}</span>}
         {iskTotal != null && iskTotal > 0 && <span className="mc" title={t('market price (Jita)')}>{fmt(iskTotal, 0) + ' ISK'}</span>}
       </span>
+      <button className="mini mmenu" onClick={(e) => { e.stopPropagation(); setMenu({ i: idx, x: e.clientX + 4, y: e.clientY + 4 }); }} title={t('module options')}>⋯</button>
       <button className="mini rm" onClick={remove} title={t('Remove')}>✕</button>
       {showMuta && (
         <div className="muta">
