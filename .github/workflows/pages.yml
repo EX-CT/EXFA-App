@@ -118,7 +118,7 @@ jobs:
           BASE: /EXFA-App/
           VITE_ESI_CLIENT_ID: ${{ vars.ESI_CLIENT_ID }}
       # SPA fallback so /esi/callback (and other client routes) load index.html on GitHub Pages
-      - run: cp apps/web/dist/index.html apps/web/dist/404.html
+      - run: cp dist/index.html dist/404.html
       - name: Smoke test (headless Chrome computes the demo fit)
         run: |
           set -o pipefail
