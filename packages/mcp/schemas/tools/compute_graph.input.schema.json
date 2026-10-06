@@ -564,7 +564,7 @@
       ]
     },
     "x_axis": {
-      "description": "x axis (default: the graph's first axis valid for every requested y)",
+      "description": "x axis (default: the first preferred axis valid for every requested y)",
       "type": "string"
     },
     "x": {
