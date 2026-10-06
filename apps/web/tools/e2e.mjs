@@ -508,13 +508,16 @@ const dupOk = lf.length === nBefore + 1 && dup && dup.folder === 'PvP/Small' && 
 await p.evaluate((id) => document.querySelector(`.lib-fit[data-fit-id="${id}"] .lib-del`).click(), dup?.id);
 await p.waitForSelector('.toast button:not(.toast-dismiss)', { timeout: 10000 });
 const immediatelyDeleted = await p.waitForFunction((id) => ![...document.querySelectorAll('.lib-fit')].some((x) => x.dataset.fitId === id), { timeout: 10000 }, dup?.id).then(() => true).catch(() => false);
+const deleteToast = await p.$$eval('.toast', (els, name) => els.map((el) => el.textContent ?? '').find((text) => text.includes(`Deleted “${name}”`)) ?? '', dup?.name);
+const namedDeleteNotice = deleteToast.includes(`Deleted “${dup?.name}”`);
 await p.click('.toast button:not(.toast-dismiss)');
 const restored = await p.waitForFunction((id) => [...document.querySelectorAll('.lib-fit')].some((x) => x.dataset.fitId === id), { timeout: 10000 }, dup?.id).then(() => true).catch(() => false);
 await p.evaluate((id) => document.querySelector(`.lib-fit[data-fit-id="${id}"] .lib-del`).click(), dup?.id);
 await p.waitForFunction((id) => ![...document.querySelectorAll('.lib-fit')].some((x) => x.dataset.fitId === id), { timeout: 10000 }, dup?.id);
 lf = await libFits();
 check('web.e2e.library-duplicate-delete: duplicate keeps folder and tags; delete is immediate and Undo restores it',
-  dupOk && immediatelyDeleted && restored && lf.length === nBefore && !lf.some((f) => f.name.endsWith('(copy)')), `${nBefore} -> ${lf.length}; deleted ${immediatelyDeleted}, undo ${restored}`);
+  dupOk && immediatelyDeleted && namedDeleteNotice && restored && lf.length === nBefore && !lf.some((f) => f.name.endsWith('(copy)')),
+  `${nBefore} -> ${lf.length}; deleted ${immediatelyDeleted}, named notice ${namedDeleteNotice}, undo ${restored}; ${deleteToast}`);
 
 // bulk export: selected fits as one EVE XML (Pyfa backup shape) and as multi-fit EFT; XML re-import
 for (const n of ['Pyfa Vexor', 'Pyfa Svipul']) await p.evaluate((nm) => document.querySelector(`.lib-fit[data-fit-name="${nm}"] .lib-sel`).click(), n);
@@ -647,10 +650,10 @@ check('web.e2e.adjustments-feedback: Engine corrections show localized details a
 if (modeAdjustment) {
   await p.click('.adjustments-head button');
   const written = await waitNew(correctionStats);
-  await p.waitForSelector('.toast button:not(.toast-dismiss)', { timeout: 10000 });
-  const toastText = await p.$eval('.toast', (el) => el.textContent ?? '');
+  await p.waitForFunction(() => [...document.querySelectorAll('.toast')].some((el) => el.textContent?.includes('Applied one correction to the fit')), { timeout: 10000 });
+  const toastText = await p.$$eval('.toast', (els) => els.map((el) => el.textContent ?? '').find((text) => text.includes('Applied one correction to the fit')) ?? '');
   check('web.e2e.adjustments-writeback: write back clears the correction and offers Undo',
-    !(written.adjustments?.length) && /\b1\b/.test(toastText) && /Undo/.test(toastText),
+    !(written.adjustments?.length) && /Applied one correction to the fit/.test(toastText) && /Undo/.test(toastText),
     `${JSON.stringify(written.adjustments)}; ${toastText}`);
   await p.click('.toast button:not(.toast-dismiss)');
   const restored = await waitNew(written);
@@ -660,6 +663,42 @@ if (modeAdjustment) {
 } else {
   check('web.e2e.adjustments-writeback: write back clears the correction and offers Undo', false, 'no MODE_DEFAULTED adjustment');
   check('web.e2e.adjustments-undo: Undo restores the corrected request', false, 'no MODE_DEFAULTED adjustment');
+}
+
+await p.goto(withQuery(`eft=${encodeURIComponent(EFT)}`), { waitUntil: 'networkidle0', timeout: 120000 });
+await p.waitForFunction(() => window.__lastStats?.ship?.name === 'Vexor' && !window.__lastStats.error, { timeout: 120000 });
+for (const [width, height] of [[1600, 900], [1920, 1080]]) {
+  await p.setViewport({ width, height });
+  const layout = await p.evaluate(() => {
+    const panels = ['aside.left', '.center', 'aside.right'].map((selector) => {
+      const el = document.querySelector(selector);
+      return { selector, clientWidth: el?.clientWidth ?? 0, scrollWidth: el?.scrollWidth ?? Infinity };
+    });
+    const outside = [...document.querySelectorAll('main, main *')].flatMap((el) => {
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.right > window.innerWidth + 1
+        ? [`${el.tagName.toLowerCase()}.${String(el.className).replaceAll(' ', '.')}: ${rect.right.toFixed(1)}px`]
+        : [];
+    });
+    return { panels, outside };
+  });
+  check(`web.e2e.layout-panel-overflow-${width}: left, center and right fit their columns`,
+    layout.panels.every((panel) => panel.clientWidth > 0 && panel.scrollWidth <= panel.clientWidth + 1), JSON.stringify(layout.panels));
+  check(`web.e2e.layout-viewport-overflow-${width}: no main element extends beyond the viewport`,
+    layout.outside.length === 0, layout.outside.slice(0, 8).join('; '));
+}
+
+const activeFitId = await p.evaluate(() => window.__lastStatsFit);
+if (activeFitId) {
+  await p.evaluate(() => [...document.querySelectorAll('aside.left .tabs button')].find((button) => button.textContent?.startsWith('Fits'))?.click());
+  await p.waitForSelector(`.lib-fit[data-fit-id="${activeFitId}"] .lib-del`, { timeout: 10000 });
+  await p.evaluate((id) => document.querySelector(`.lib-fit[data-fit-id="${id}"] .lib-del`)?.click(), activeFitId);
+  await p.waitForFunction(() => document.querySelector('aside.right')?.textContent?.includes('No fit selected') && window.__lastStats === null, { timeout: 10000 });
+  const emptyRight = await p.$eval('aside.right', (el) => ({ text: el.textContent ?? '', tables: el.querySelectorAll('table').length }));
+  check('web.e2e.no-fit-clears-stats: deleting the active fit clears stats and shows the empty state',
+    /No fit selected/.test(emptyRight.text) && emptyRight.tables === 0, JSON.stringify(emptyRight));
+} else {
+  check('web.e2e.no-fit-clears-stats: deleting the active fit clears stats and shows the empty state', false, 'no active fit id');
 }
 
 check('web.e2e.no-page-errors: no page errors', errors.length === 0, errors.join(' | '));

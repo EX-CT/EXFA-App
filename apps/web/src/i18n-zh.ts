@@ -3,7 +3,7 @@
 export const ZH: Record<string, string> = {
   'Undo (Ctrl+Z)': '撤销 (Ctrl+Z)', 'Redo (Ctrl+Y)': '重做 (Ctrl+Y)', '↶ Undo': '↶ 撤销', '↷ Redo': '↷ 重做',
   'Import / export': '导入 / 导出', Market: '市场', Fits: '配置', Character: '角色', Profiles: '配置文件',
-  Fit: '舰船装配', Graphs: '图表', 'No fit selected.': '未选择配置。', 'No data for this graph.': '此图表无数据。',
+  Fit: '舰船装配', Graphs: '图表', 'No fit selected.': '未选择配置。', 'No fit selected': '未选择配置', 'No data for this graph.': '此图表无数据。',
   'Target profiles (outgoing DPS, graphs)': '目标配置（输出 DPS、图表）', 'Damage patterns (incoming damage, for EHP / RAH)': '伤害类型（受到的伤害，用于 EHP / 反应式装甲）',
   Duplicate: '复制', Delete: '删除', 'Download all fits, characters and profiles as JSON': '将所有配置、角色和配置文件下载为 JSON',
   'Backup library': '备份', 'Restore… ': '恢复… ', 'Engine backend': '引擎后端', Clone: '克隆', 'Train required': '学习所需技能',
@@ -72,6 +72,11 @@ export const ZH: Record<string, string> = {
   'via the graph RPC': '通过图表 RPC', 'vs target': '对目标', 'w-space': '虫洞', warp: '跃迁', 'warp core': '跃迁核心', 'with warnings': '有警告',
   '— no charge —': '— 无弹药 —', '— not mutated —': '— 未突变 —', '— target profile —': '— 目标配置 —',
   'starting engine…': '正在启动引擎…',
+  Error: '错误', Edit: '编辑', Rename: '重命名', Base: '基准', Swap: '更换',
+  Heat: '热量', 'Deleted “{name}”': '已删除「{name}」', 'Deleted {n} fits': '已删除 {n} 个配置',
+  'Deleted folder “{name}”': '已删除文件夹「{name}」',
+  'Applied one correction to the fit': '已将一项修正应用到配置',
+  'Applied {n} corrections to the fit': '已将 {n} 项修正应用到配置',
   // dynamic keys (labels from tables in the code)
   All: '全部', Ships: '舰船', Modules: '模块', Implants: '植入体', Boosters: '增效剂',
   ship: '舰船', module: '模块', charge: '弹药', drone: '无人机', fighter: '铁骑', implant: '植入体', booster: '增效剂', subsystem: '子系统', skill: '技能', structure: '建筑', other: '其他',

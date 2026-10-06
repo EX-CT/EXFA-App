@@ -70,7 +70,10 @@ export function FitBrowser({ ds, lib, activeId, status, onOpen, onLib, onInfo }:
     setSel((s) => s.filter((x) => !ids.includes(x)));
     const activeWasRemoved = !!activeId && ids.includes(activeId);
     if (activeWasRemoved) onOpen(null);
-    notify({ kind: 'ok', text: `${t('deleted')}: ${removed.length}`, action: { label: t('Undo'), onClick: () => {
+    const text = removed.length === 1
+      ? t('Deleted “{name}”').replace('{name}', () => removed[0].name)
+      : t('Deleted {n} fits').replace('{n}', String(removed.length));
+    notify({ kind: 'ok', text, action: { label: t('Undo'), onClick: () => {
       const current = libRef.current;
       onLib({ ...current, fits: { ...current.fits, ...Object.fromEntries(removed.map((f) => [f.id, f])) } });
       setSel((s) => [...new Set([...s, ...removed.map((f) => f.id)])]);
@@ -81,7 +84,8 @@ export function FitBrowser({ ds, lib, activeId, status, onOpen, onLib, onInfo }:
     const moved = Object.values(lib.fits).filter((f) => normFolder(f.folder) === key || normFolder(f.folder).startsWith(`${key}/`));
     const previousFolders = lib.folders ?? [];
     apply(deleteFolder(lib, key));
-    notify({ kind: 'ok', text: `${t('deleted')}: ${key}`, action: { label: t('Undo'), onClick: () => {
+    const text = t('Deleted folder “{name}”').replace('{name}', () => key);
+    notify({ kind: 'ok', text, action: { label: t('Undo'), onClick: () => {
       const current = libRef.current;
       const fits = { ...current.fits };
       for (const old of moved) if (fits[old.id]) fits[old.id] = { ...fits[old.id], folder: old.folder };
@@ -192,15 +196,15 @@ export function FitBrowser({ ds, lib, activeId, status, onOpen, onLib, onInfo }:
           <input className="lib-edit-name" value={edit.name} autoFocus onChange={(e) => setEdit({ ...edit, name: e.target.value })} onKeyDown={(e) => { if (e.key === 'Enter') saveEdit(); if (e.key === 'Escape') setEdit(null); }} placeholder={t('name')} />
           <input className="lib-edit-folder" list="lib-folders" value={edit.folder} onChange={(e) => setEdit({ ...edit, folder: e.target.value })} placeholder={t('folder (a/b)')} />
           <input className="lib-edit-tags" value={edit.tags} onChange={(e) => setEdit({ ...edit, tags: e.target.value })} placeholder={t('tags, comma separated')} />
-          <button className="mini lib-edit-save" onClick={saveEdit}>✔</button><button className="mini" onClick={() => setEdit(null)}>✕</button>
+          <button className="mini lib-edit-save" onClick={saveEdit}>{t('Save')}</button><button className="mini" onClick={() => setEdit(null)}>✕</button>
         </span>
       ) : (
         <span className="lib-name"><TypeIcon id={f.ship_type_id} size={24} /> <b>{ds.name(f.ship_type_id)}</b> {f.name}
           {(f.tags ?? []).map((x) => <span key={x} className="tag">{x}</span>)}</span>
       )}
       <span className="right">
-        <button className="mini lib-rename" title={t('Rename / move / tags')} onClick={(e) => { e.stopPropagation(); setEdit({ id: f.id, name: f.name, folder: f.folder ?? '', tags: (f.tags ?? []).join(', ') }); }}>✎</button>
-        <button className="mini lib-dup" title={t('Duplicate')} onClick={(e) => { e.stopPropagation(); duplicate(f); }}>⧉</button>
+        <button className="mini lib-rename" title={t('Rename / move / tags')} onClick={(e) => { e.stopPropagation(); setEdit({ id: f.id, name: f.name, folder: f.folder ?? '', tags: (f.tags ?? []).join(', ') }); }}>{t('Edit')}</button>
+        <button className="mini lib-dup" title={t('Duplicate')} onClick={(e) => { e.stopPropagation(); duplicate(f); }}>{t('Duplicate')}</button>
         <button className="mini lib-del" title={t('Delete')} onClick={(e) => { e.stopPropagation(); remove([f.id]); }}>✕</button>
       </span>
     </li>
@@ -237,7 +241,7 @@ export function FitBrowser({ ds, lib, activeId, status, onOpen, onLib, onInfo }:
               </span>
             : <>{mode === 'folder' && key.includes('/') ? <span className="muted">{key.slice(0, key.lastIndexOf('/') + 1)}</span> : null}{mode === 'folder' && key.includes('/') ? key.slice(key.lastIndexOf('/') + 1) : label}</>} <span className="muted">({fs.length})</span>
             {mode === 'folder' && key && <span className="right">
-              <button className="mini lib-folder-rename" title={t('Rename folder')} onClick={(e) => { e.preventDefault(); setFolderRename(key); }}>✎</button>
+              <button className="mini lib-folder-rename" title={t('Rename folder')} onClick={(e) => { e.preventDefault(); setFolderRename(key); }}>{t('Rename')}</button>
               <button className="mini lib-folder-del" title={t('Delete folder (fits move to the parent folder)')} onClick={(e) => { e.preventDefault(); removeFolder(key); }}>✕</button>
             </span>}
           </summary>

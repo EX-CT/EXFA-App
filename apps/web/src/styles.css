@@ -40,7 +40,8 @@ header .header-meta { color: var(--mut); white-space: nowrap; overflow: hidden; 
 header select { height: 20px; }
 main { flex: 1; display: grid; grid-template-columns: 270px minmax(0,1fr) 300px; min-height: 0; width: 100%; margin: 0; }
 aside, .center { min-width: 0; min-height: 0; border-right: 1px solid var(--line); }
-aside.right { overflow: auto; padding: 4px; border-right: 0; }
+aside.right { display: flex; flex-direction: column; align-items: stretch; gap: 0; margin-left: 0; overflow: auto; padding: 4px; border-right: 0; }
+aside.right > .stats, aside.right > .section { flex: 0 0 auto; min-width: 0; width: 100%; }
 footer { padding: 3px 8px; border-top: 1px solid var(--line); font-size: 10px; }
 @media (min-width: 1800px) { main { grid-template-columns: 300px minmax(0,1fr) 340px; } }
 @media (max-width: 1100px) { main { grid-template-columns: 240px minmax(0,1fr); } aside.right { display: none; } }
@@ -81,6 +82,20 @@ ul.fits li { min-height: 22px; padding: 2px 4px; border-bottom: 1px solid var(--
 .bar .lbl, .bar .val { position: relative; padding: 0 6px; line-height: 18px; } .bar .val { float: right; }
 .kv { display: flex; flex-wrap: wrap; gap: 4px 12px; } .kv.small { font-size: 11px; color: var(--mut); }
 table.grid { width: 100%; border-collapse: collapse; } table.grid td, table.grid th { padding: 1px 3px; text-align: left; border-bottom: 1px solid var(--line); }
+aside.right .stats { min-width: 0; width: 100%; }
+.stats table.grid { width: 100%; max-width: 100%; table-layout: fixed; }
+.stats table.grid td, .stats table.grid th { min-width: 0; padding: 1px 2px; overflow: hidden; }
+.stats table.grid .num { white-space: nowrap; }
+.stats table.weapon-stats th:first-child, .stats table.weapon-stats td:first-child { width: 40%; }
+.stats table.weapon-stats th:nth-child(2), .stats table.weapon-stats td:nth-child(2) { width: 17%; }
+.stats table.weapon-stats th:nth-child(3), .stats table.weapon-stats td:nth-child(3) { width: 25%; }
+.stats table.weapon-stats th:nth-child(4), .stats table.weapon-stats td:nth-child(4) { width: 18%; }
+.stats table.defense { font-size: 10px; }
+.stats table.defense th:first-child, .stats table.defense td:first-child { width: 18%; }
+.stats table.defense th:nth-child(2), .stats table.defense td:nth-child(2),
+.stats table.defense th:nth-child(3), .stats table.defense td:nth-child(3) { width: 14%; }
+.stats table.defense th:nth-child(n+4), .stats table.defense td:nth-child(n+4) { width: 13.5%; }
+.stats .wname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 table.grid.small { font-size: 11px; } .num { text-align: right !important; font-variant-numeric: tabular-nums; }
 .dt-em { color: var(--info); } .dt-thermal { color: var(--bad); } .dt-kinetic { color: var(--mut); } .dt-explosive { color: var(--warn); }
 .error, .bad { color: var(--bad); } ul.viol { margin: 0; padding-left: 16px; color: var(--bad); } ul.viol.warn { color: var(--warn); }

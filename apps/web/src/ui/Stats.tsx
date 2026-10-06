@@ -67,17 +67,18 @@ export function Stats({ st, busy, ms, error, ds, fit, onWriteBack }: {
         </tbody></table>
         <div className="kv">{DT.map((k) => <span key={k} className={'dt-' + k}>{DT_SHORT[k]} {fmt(o.total?.dps?.[k])}</span>)}</div>
         {(o.weapons ?? []).length > 0 && (
-          <table className="grid small"><thead><tr><th>{tr('Weapon')}</th><th>{tr('dps')}</th><th>{tr('Range')}</th><th>{tr('Cycle s')}</th></tr></thead><tbody>
-            {o.weapons.map((w: any, i: number) => (
-              <tr key={i}><td className="wname">{weaponName(w, ds, fit)}</td><td className="num">{fmt(w.dps?.total)}</td>
+          <table className="grid small weapon-stats"><thead><tr><th>{tr('Weapon')}</th><th>{tr('dps')}</th><th>{tr('Range')}</th><th>{tr('Cycle s')}</th></tr></thead><tbody>
+            {o.weapons.map((w: any, i: number) => {
+              const name = weaponName(w, ds, fit);
+              return <tr key={i}><td className="wname" title={name}>{name}</td><td className="num">{fmt(w.dps?.total)}</td>
                 <td className="num">{w.kind === 'missile' ? `${fmt((w.range_m ?? 0) / 1000)} km` : w.optimal_m != null ? `${fmt(w.optimal_m / 1000)}+${fmt((w.falloff_m ?? 0) / 1000)} km` : '—'}</td>
-                <td className="num">{fmt((w.cycle_time_ms ?? 0) / 1000, 2)}</td></tr>
-            ))}
+                <td className="num">{fmt((w.cycle_time_ms ?? 0) / 1000, 2)}</td></tr>;
+            })}
           </tbody></table>
         )}
       </Section>
       <Section title={tr('Defense')} right={<b>{fmt(d.ehp?.total, 0)} EHP</b>}>
-        <table className="grid"><thead><tr><th></th><th>HP</th><th>EHP</th>{DT.map((k) => <th key={k} className={'dt-' + k}>{DT_SHORT[k]}</th>)}</tr></thead><tbody>
+        <table className="grid defense"><thead><tr><th></th><th>HP</th><th>EHP</th>{DT.map((k) => <th key={k} className={'dt-' + k}>{DT_SHORT[k]}</th>)}</tr></thead><tbody>
           {(['shield', 'armor', 'hull'] as const).map((l) => (
             <tr key={l}><td>{tr(l)}</td><td className="num">{fmt(d.hp?.[l], 0)}</td><td className="num">{fmt(d.ehp?.[l], 0)}</td>
               {DT.map((k) => <td key={k} className="num">{d.resonance?.[l]?.[k] != null ? pctFmt(1 - d.resonance[l][k]) : '—'}</td>)}</tr>

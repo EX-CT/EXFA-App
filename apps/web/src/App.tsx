@@ -115,11 +115,11 @@ export default function App() {
     eng.init().then((s) => {
       if (!alive) return;
       setEngineMs(performance.now() - started);
-      setEngineStatus(`✔ ${s}`);
+      setEngineStatus(`${t('Ready')}: ${s}`);
       if (eng.rpcRaw) setEngineFormatsRpc((method, params) => eng.rpcRaw!(method, params));
       setEngineReady((n) => n + 1);
       (window as any).__eveEngine = eng;
-    }, (e) => alive && setEngineStatus(`✖ ${eng.info.id}: ${e.message}`));
+    }, (e) => alive && setEngineStatus(`${t('Error')}: ${eng.info.id}: ${e.message}`));
     return () => { alive = false; eng.dispose(); };
   }, [ecfg.datasetUrl, ecfg.wasmUrl]);
 
@@ -192,8 +192,13 @@ export default function App() {
   // stateless calc on every change (debounced, latest wins)
   const seq = useRef(0);
   useEffect(() => {
-    if (!request || !engineReady || !engineRef.current) return;
     const my = ++seq.current;
+    if (!request) {
+      setStats(null); setCalcErr(null); setBusy(false); setMs(0);
+      (window as any).__lastStats = null; (window as any).__lastStatsFit = null; (window as any).__lastRequest = null;
+      return;
+    }
+    if (!engineReady || !engineRef.current) return;
     const fitId = settings.activeFitId;
     const t = setTimeout(() => {
       setBusy(true);
@@ -318,7 +323,10 @@ export default function App() {
     }
     if (!count) return;
     setFit(next);
-    notify({ kind: 'info', text: `${t('Written back')} ${count} ${t('items')}`, ms: 6000,
+    const text = count === 1
+      ? t('Applied one correction to the fit')
+      : t('Applied {n} corrections to the fit').replace('{n}', String(count));
+    notify({ kind: 'info', text, ms: 6000,
       action: { label: t('Undo'), onClick: () => setFit(previous) } });
   };
 
@@ -426,10 +434,11 @@ export default function App() {
             </div>}
           </section>
         </section>
-        <aside className="right">{ds ? <>
+      <aside className="right">{!ds ? <div className="skeleton-list"><i /><i /><i /><i /><i /><i /></div>
+        : fit ? <>
           <Stats st={stats} busy={busy} ms={ms} error={calcErr} ds={ds} fit={fit} onWriteBack={writeBackAdjustments} />
           <PriceBox ds={ds} st={stats} settings={priceSet} onSettings={setPriceSet} snapshot={snapState} />
-        </> : <div className="skeleton-list"><i /><i /><i /><i /><i /><i /></div>}</aside>
+        </> : <p className="muted">{t('No fit selected')}</p>}</aside>
       </main>
       <footer className="muted">
         {t('EXFA Engine v0.2.0 · WASM-only. Data:')} <a href="https://github.com/EX-CT/EXFA-Data/releases">EX-CT/EXFA-Data</a> {t('release')}.
