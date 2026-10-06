@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { t } from '../i18n';
 const tr = t;
 import type { InfoCtx } from './Market';
 import type { Dataset, Slot } from '../data/dataset';
-import { moveModule, type Fit, type FitModule, type Library, type ModState } from '../fit/model';
+import { addItemToFit, draggedType, moveModule, type Fit, type FitModule, type Library, type ModState } from '../fit/model';
 import type { FitStats } from '../engine/adapter';
 import { Tabs } from './common';
 import { applyImplantSet, saveUserImplantSets, useSdePresets, userImplantSets, type ImplantSet } from '../data/sdePresets';
@@ -31,7 +31,36 @@ const dropProps = (fit: Fit, slot: Slot, to: number | null, onChange: (f: Fit) =
   onDrop: (e: React.DragEvent) => { e.preventDefault(); if (dragFrom != null) onChange(moveModule(fit, dragFrom, to)); dragFrom = null; },
 });
 
-function ModuleRow({ ds, m, idx, fit, stats, onChange, onInfo }: { ds: Dataset; m: FitModule; idx: number } & FitProps) {
+/** Right-click context menu on a module row (Pyfa context menu): variation swap, state, info, remove. */
+function CtxMenu({ x, y, ds, m, vars, onInfo, onChange, onRemove, onClose }: {
+  x: number; y: number; ds: Dataset; m: FitModule; vars: number[];
+  onInfo: (id: number, ctx?: InfoCtx) => void; onChange: (p: Partial<FitModule>) => void; onRemove: () => void; onClose: () => void;
+}) {
+  useEffect(() => {
+    const close = () => onClose();
+    window.addEventListener('click', close); window.addEventListener('contextmenu', close);
+    return () => { window.removeEventListener('click', close); window.removeEventListener('contextmenu', close); };
+  }, [onClose]);
+  return (
+    <div className="ctxmenu" style={{ left: x, top: y }} onClick={(e) => e.stopPropagation()} onContextMenu={(e) => e.preventDefault()}>
+      <div className="ctxhead">{ds.name(m.type_id)}</div>
+      <button onClick={() => { onInfo(m.type_id); onClose(); }}>{t('Show info')}</button>
+      {vars.length > 1 && (
+        <div className="ctxgroup">
+          <div className="ctxlabel">{t('Variations')}</div>
+          {vars.map((v) => <button key={v} className={v === m.type_id ? 'on' : ''} onClick={() => { onChange({ type_id: v, mutation: null }); onClose(); }}>{ds.name(v)}</button>)}
+        </div>
+      )}
+      <div className="ctxgroup">
+        <div className="ctxlabel">{t('State')}</div>
+        {STATES.map((s) => <button key={s} className={s === m.state ? 'on' : ''} onClick={() => { onChange({ state: s }); onClose(); }}>{STATE_ICON[s]} {t(s)}</button>)}
+      </div>
+      <button className="danger" onClick={() => { onRemove(); onClose(); }}>{t('Remove')}</button>
+    </div>
+  );
+}
+
+function ModuleRow({ ds, m, idx, fit, stats, onChange, onInfo, menu, setMenu }: { ds: Dataset; m: FitModule; idx: number; menu: { i: number; x: number; y: number } | null; setMenu: (v: { i: number; x: number; y: number } | null) => void } & FitProps) {
   const charges = ds.chargesFor(m.type_id);
   const mutas = ds.mutaplasmidsFor(m.mutation?.base_type_id ?? m.type_id);
   const [showMuta, setShowMuta] = useState(false);
@@ -49,8 +78,19 @@ function ModuleRow({ ds, m, idx, fit, stats, onChange, onInfo }: { ds: Dataset; 
   return (
     <div className={'mod' + (viol.length ? ' bad' : '')} title={viol.map((v: any) => v.message).join('\n')} data-idx={idx}
       draggable onDragStart={(e) => { dragFrom = idx; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(idx)); }} onDragEnd={() => { dragFrom = null; }}
-      {...dropProps(fit, m.slot, idx, onChange)}>
-      <button className={'state s-' + m.state} onClick={() => cycle(1)} onContextMenu={(e) => { e.preventDefault(); cycle(-1); }} title={`${t(m.state)} (${t('click: next, right-click: previous')})`}>{STATE_ICON[m.state]}</button>
+      onContextMenu={(e) => { e.preventDefault(); setMenu({ i: idx, x: e.clientX, y: e.clientY }); }}
+      onDragOver={(e) => {
+        const id = draggedType.id;
+        if (id != null && ds.kind(id) === 'charge' && ds.chargesFor(m.type_id).includes(id)) e.preventDefault();
+        else if (dragFrom != null && fit.modules[dragFrom]?.slot === m.slot) e.preventDefault();
+      }}
+      onDrop={(e) => {
+        const id = draggedType.id;
+        if (id != null && ds.kind(id) === 'charge' && ds.chargesFor(m.type_id).includes(id)) { e.preventDefault(); e.stopPropagation(); set({ charge_type_id: id }); draggedType.id = null; return; }
+        if (dragFrom != null) { e.preventDefault(); onChange(moveModule(fit, dragFrom, idx)); dragFrom = null; }
+      }}>
+      {menu?.i === idx && <CtxMenu x={menu.x} y={menu.y} ds={ds} m={m} vars={ds.variations(m.type_id)} onInfo={onInfo} onChange={set} onRemove={remove} onClose={() => setMenu(null)} />}
+      <button className={'state s-' + m.state} onClick={() => cycle(1)} title={`${t(m.state)} (${t('click: next state')})`}>{STATE_ICON[m.state]}</button>
       <span className="mname" onClick={() => onInfo(m.type_id, { module: idx })}>{ds.name(m.type_id)}{m.mutation ? ' ✦' : ''}</span>
       {charges.length > 0 && (
         <select value={m.charge_type_id ?? ''} onChange={(e) => set({ charge_type_id: e.target.value ? +e.target.value : null })}>
@@ -255,9 +295,23 @@ function Projected(p: FitProps & { addProjected: boolean; setAddProjected: (b: b
 export function Fitting(p: FitProps & { addProjected: boolean; setAddProjected: (b: boolean) => void }) {
   const { ds, fit, lib, stats, onChange } = p;
   const [tab, setTab] = useState<'fit' | 'proj' | 'opts'>('fit');
+  const [menu, setMenu] = useState<{ i: number; x: number; y: number } | null>(null);
   const modes = ds.skills.length ? Object.entries(ds.raw.types).filter(([, t]) => t.group === 1306 && t.name.startsWith(ds.name(fit.ship_type_id, 'en') + ' ')).map(([k]) => +k) : [];
+  // Pyfa: dropping a market item anywhere on the fitting canvas adds it to its natural slot/bay
+  // (a charge dropped on a module row is handled by the row itself).
+  const dropItem = {
+    onDragOver: (e: React.DragEvent) => { if (draggedType.id != null) e.preventDefault(); },
+    onDrop: (e: React.DragEvent) => {
+      const id = draggedType.id;
+      if (id == null) return;
+      e.preventDefault();
+      const next = addItemToFit(ds, fit, id, p.addProjected);
+      if (next) onChange(next);
+      draggedType.id = null;
+    },
+  };
   return (
-    <div className="fitting">
+    <div className="fitting" {...dropItem}>
       <div className="fithead">
         <span className="ship" onClick={() => p.onInfo(fit.ship_type_id, { ship: true })}>{ds.name(fit.ship_type_id)}</span>
         <input value={fit.name} onChange={(e) => onChange({ ...fit, name: e.target.value })} />
@@ -268,6 +322,12 @@ export function Fitting(p: FitProps & { addProjected: boolean; setAddProjected: 
         )}
         <select value={fit.character_id} onChange={(e) => onChange({ ...fit, character_id: e.target.value })} title={t('Character')}>
           {Object.values(lib.characters).map((c) => <option key={c.id} value={c.id}>👤 {c.name}</option>)}
+        </select>
+        <select value={fit.damage_pattern_id} onChange={(e) => onChange({ ...fit, damage_pattern_id: e.target.value })} title={t('Damage pattern (incoming)')}>
+          {Object.values(lib.damagePatterns).filter((d) => !d.id.startsWith('sde:') || d.id === fit.damage_pattern_id).map((d) => <option key={d.id} value={d.id}>🛡 {d.name}</option>)}
+        </select>
+        <select value={fit.target_profile_id} onChange={(e) => onChange({ ...fit, target_profile_id: e.target.value })} title={t('Target profile (outgoing)')}>
+          {Object.values(lib.targetProfiles).filter((x) => !x.id.startsWith('sde:') || x.id === fit.target_profile_id).map((x) => <option key={x.id} value={x.id}>🎯 {x.name}</option>)}
         </select>
       </div>
       <Tabs tabs={[['fit', t('Fitting')], ['proj', `${t('Projected / fleet / environment')} (${fit.projected.length + fit.fleet.booster_fit_ids.length + fit.environment.length})`], ['opts', t('Options')]]} value={tab} onChange={setTab} />
@@ -280,7 +340,7 @@ export function Fitting(p: FitProps & { addProjected: boolean; setAddProjected: 
             return (
               <div className="slotgroup" key={s}>
                 <h4>{t(label)} <span className="muted">{mods.length}/{total}</span></h4>
-                {mods.map(([m, i]) => <ModuleRow key={i} {...p} m={m} idx={i} />)}
+                {mods.map(([m, i]) => <ModuleRow key={i} {...p} m={m} idx={i} menu={menu} setMenu={setMenu} />)}
                 {Array.from({ length: Math.max(0, total - mods.length) }, (_, i) => <div key={'e' + i} className="mod empty" {...dropProps(fit, s, null, onChange)}>{t(`[empty ${s} slot]`)}</div>)}
               </div>
             );

@@ -45,6 +45,7 @@ export function CharacterEditor({ ds, lib, fit, onLib }: { ds: Dataset; lib: Lib
           <input value={ch.name} onChange={(e) => save({ ...ch, name: e.target.value })} />
           <label>{t('default level')} <select value={ch.default_level} onChange={(e) => save({ ...ch, default_level: +e.target.value })}>{[0, 1, 2, 3, 4, 5].map((l) => <option key={l}>{l}</option>)}</select></label>
           <label>{t('security status')} <input className="qty wide" type="number" step={0.1} min={-10} max={5} value={ch.security_status ?? ''} onChange={(e) => save({ ...ch, security_status: e.target.value === '' ? null : +e.target.value })} /></label>
+          <label title={t('Alpha clone: engine caps skills at their Alpha level')}><input type="checkbox" checked={ch.alpha_clone === true} onChange={(e) => save({ ...ch, alpha_clone: e.target.checked })} /> {t('alpha clone')}</label>
         </div>
       )}
       {fit && (

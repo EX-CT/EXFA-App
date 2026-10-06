@@ -1,5 +1,6 @@
 // UI-side fit model and its conversion into a stateless FitRequest (EXFA-Docs 05-api-schema, contract 1.4.2).
-import type { Slot } from '../data/dataset';
+import type { Dataset, Slot } from '../data/dataset';
+import { defaultState } from './states';
 
 export type ModState = 'offline' | 'online' | 'active' | 'overheated';
 export interface Mutation { base_type_id: number; mutaplasmid_type_id: number; attributes: Record<string, number> }
@@ -27,12 +28,17 @@ export interface Fit {
   /** fit library: folder path ("PvP/Frigates", "" or absent = top level), free tags, timestamps (ISO) */
   folder?: string; tags?: string[]; created?: string; modified?: string;
 }
-export interface Character { id: string; name: string; default_level: number; levels: Record<string, number>; security_status?: number | null; builtin?: boolean }
+export interface Character { id: string; name: string; default_level: number; levels: Record<string, number>; security_status?: number | null; builtin?: boolean;
+  /** Alpha clone: engine caps every skill at its Alpha level (Pyfa alphaCloneID). */
+  alpha_clone?: boolean }
 export interface DamagePattern { id: string; name: string; em: number; thermal: number; kinetic: number; explosive: number; builtin?: boolean }
 export interface TargetProfile { id: string; name: string; em: number; thermal: number; kinetic: number; explosive: number;
   signature_radius?: number | null; max_velocity?: number | null; radius?: number | null; builtin?: boolean }
 
 export const uid = () => Math.random().toString(36).slice(2, 10);
+
+/** type id of the market item being dragged (set on dragstart; HTML5 dragover can't read payload data) */
+export const draggedType = { id: null as number | null };
 
 export function newFit(ship: number, name = 'New fit'): Fit {
   return {
@@ -73,7 +79,7 @@ export function toRequest(fit: Fit, lib: Library, depth = 0): Record<string, unk
   return {
     schema_version: 1,
     ship: { type_id: fit.ship_type_id, mode_type_id: fit.mode_type_id ?? null },
-    character: { skills: { default_level: ch?.default_level ?? 5, levels: ch?.levels ?? {} }, security_status: ch?.security_status ?? null },
+    character: { skills: { default_level: ch?.default_level ?? 5, levels: ch?.levels ?? {} }, security_status: ch?.security_status ?? null, alpha_clone: ch?.alpha_clone === true },
     modules: fit.modules.map(moduleReq),
     drones: fit.drones.map((d) => ({ type_id: d.type_id, quantity: d.quantity, active: d.active, ...(d.mutation ? { mutation: d.mutation } : {}) })),
     fighters: fit.fighters.map((f) => ({ type_id: f.type_id, quantity: f.quantity, active: f.active, abilities: f.abilities ?? null })),
@@ -103,6 +109,41 @@ export function toRequest(fit: Fit, lib: Library, depth = 0): Record<string, unk
 /** Rack position (Pyfa: drag a module onto another slot of the same rack): the module at `from` takes the place of the
  *  module at `to` and they swap; `to` = null moves it to the end of its rack. Positions in other racks are unchanged.
  *  The order inside a rack is the slot order the engine sees (it matters for overheat damage). */
+/** Add a market item to a fit by its natural kind (Pyfa click/drag-add). Returns the new fit, or null when the item
+ *  does not fit anywhere (ship types create new fits — handled by the caller). `projected` mirrors the
+ *  "add to projected" toggle: modules/drones/fighters go to the projected list instead of the racks. */
+export function addItemToFit(ds: Dataset, fit: Fit, id: number, projected = false): Fit | null {
+  if (ds.raw.environment?.effect_beacons?.[id]) return { ...fit, environment: [...new Set([...fit.environment, id])] };
+  const k = ds.kind(id);
+  if (projected && (k === 'module' || k === 'drone' || k === 'fighter')) {
+    return { ...fit, projected: [...fit.projected, { kind: k, type_id: id, state: 'active',
+      quantity: k === 'fighter' ? ds.attr(id, 'fighterSquadronMaxSize') ?? 1 : 1, amount: 1, distance_m: 5000 }] };
+  }
+  switch (k) {
+    case 'module': case 'subsystem': {
+      const slot = ds.slot(id);
+      if (!slot) return null;
+      let modules = fit.modules;
+      if (slot === 'subsystem') { const sub = ds.attr(id, 'subSystemSlot'); modules = modules.filter((m) => m.slot !== 'subsystem' || ds.attr(m.type_id, 'subSystemSlot') !== sub); }
+      return { ...fit, modules: [...modules, { type_id: id, slot, state: defaultState(ds, id), charge_type_id: null }] };
+    }
+    case 'charge': {
+      const ok = fit.modules.map((m) => ds.chargesFor(m.type_id).includes(id));
+      if (ok.some(Boolean)) return { ...fit, modules: fit.modules.map((m, i) => (ok[i] ? { ...m, charge_type_id: id } : m)) };
+      return { ...fit, cargo: [...fit.cargo, { type_id: id, quantity: 1 }] };
+    }
+    case 'drone': {
+      const ex = fit.drones.findIndex((d) => d.type_id === id);
+      if (ex >= 0) return { ...fit, drones: fit.drones.map((d, i) => (i === ex ? { ...d, quantity: d.quantity + 1, active: d.active + 1 } : d)) };
+      return { ...fit, drones: [...fit.drones, { type_id: id, quantity: 1, active: 1 }] };
+    }
+    case 'fighter': return { ...fit, fighters: [...fit.fighters, { type_id: id, quantity: ds.attr(id, 'fighterSquadronMaxSize') ?? 1, active: true }] };
+    case 'implant': { const s = ds.attr(id, 'implantness'); return { ...fit, implants: [...fit.implants.filter((x) => ds.attr(x, 'implantness') !== s), id] }; }
+    case 'booster': { const s = ds.attr(id, 'boosterness'); return { ...fit, boosters: [...fit.boosters.filter((b) => ds.attr(b.type_id, 'boosterness') !== s), { type_id: id }] }; }
+    default: return null;
+  }
+}
+
 export function moveModule(fit: Fit, from: number, to: number | null): Fit {
   const a = fit.modules[from];
   if (!a || from === to) return fit;

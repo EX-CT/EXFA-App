@@ -97,3 +97,14 @@ button.tiny { font-size: 10px; padding: 0 4px; margin-left: 3px; }
 .stats details.bombing summary { cursor: pointer; font-weight: 600; }
 .mod .heat { font-size: 11px; color: #e8833a; margin-left: 4px; white-space: nowrap; }
 .mod .dehp, .mod .fehp { font-size: 11px; margin-left: 4px; }
+
+/* module right-click context menu (Pyfa-style) */
+.ctxmenu { position: fixed; z-index: 60; min-width: 180px; max-height: 60vh; overflow-y: auto; background: #141a21; border: 1px solid #33404f; border-radius: 6px; padding: 4px; box-shadow: 0 6px 24px #000c; display: flex; flex-direction: column; gap: 1px; }
+.ctxmenu .ctxhead { font-weight: 600; padding: 4px 8px; border-bottom: 1px solid #263039; margin-bottom: 3px; }
+.ctxmenu .ctxlabel { font-size: 11px; color: #7d8ea0; padding: 4px 8px 2px; }
+.ctxmenu button { display: block; width: 100%; text-align: left; background: none; border: none; color: #cfd8e3; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+.ctxmenu button:hover { background: #22303f; }
+.ctxmenu button.on { color: #7fd0ff; }
+.ctxmenu button.danger { color: #ff9d9d; }
+.ctxmenu .ctxgroup { border-top: 1px solid #263039; margin-top: 3px; padding-top: 2px; }
+p.desc { color: #aab8c5; font-size: 12px; line-height: 1.5; }

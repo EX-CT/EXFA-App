@@ -28,6 +28,8 @@ export interface RawDataset {
   names?: { zh?: Record<string, string> };
   names_i18n?: { zh?: Record<string, Record<string, string>> };
   traits?: Record<string, Traits>;
+  /** item description text (with EVE inline markup), keyed by type id (dataset r7+) */
+  descriptions?: Record<string, string>;
   required_skills?: Record<string, [number, number][]>;
   environment?: { effect_beacons?: Record<string, Beacon>; wormhole_classes?: Record<string, string> };
   mutaplasmids?: Record<string, { attrs: Record<string, [number, number]>; mapping: { inputs: number[]; output: number }[] }>;
@@ -223,6 +225,12 @@ export class Dataset {
     }
     scored.sort((a, b) => a[0] - b[0] || this.metaLevel(a[1]) - this.metaLevel(b[1]) || a[1] - b[1]);
     return scored.slice(0, limit).map((x) => x[1]);
+  }
+
+  /** Item description text, if the dataset carries it (r7+). EVE inline markup is left to the caller. */
+  description(id: number): string | null {
+    const s = this.raw.descriptions?.[id];
+    return s ? s : null;
   }
 
   /** Meta variations of a type (same variation parent, published, incl. the type itself), by meta level then name. */

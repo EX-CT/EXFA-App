@@ -1,6 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { t as tr } from '../i18n';
 import type { Dataset, Kind } from '../data/dataset';
+import type { Engine } from '../engine/adapter';
+import { draggedType } from '../fit/model';
 
 const KIND_FILTERS: [string, Kind[] | null][] = [
   ['All', null], ['Ships', ['ship', 'structure']], ['Modules', ['module', 'subsystem']], ['Charges', ['charge']],
@@ -28,7 +30,8 @@ export function TypeRowView({ ds, id, onPick, onInfo, depth = 0 }: { ds: Dataset
   const slot = ds.slot(id);
   const ml = ds.type(id)?.meta_level;
   return (
-    <li className="trow" style={{ paddingLeft: depth * 12 + 10 }} onDoubleClick={() => onPick(id)} title={tr('double-click to add')}>
+    <li className="trow" style={{ paddingLeft: depth * 12 + 10 }} onDoubleClick={() => onPick(id)} title={tr('double-click to add, or drag onto the fitting')}
+      draggable onDragStart={(e) => { draggedType.id = id; e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('application/x-exfa-type', String(id)); e.dataTransfer.setData('text/plain', `type:${id}`); }} onDragEnd={() => { draggedType.id = null; }}>
       <span className={'kind k-' + ds.kind(id)}>{tr(slot ?? ds.kind(id))}</span>
       <span className="tname" onClick={() => onPick(id)}>{ds.name(id)}</span>
       {ml ? <span className="meta">M{ml}</span> : null}
@@ -37,10 +40,26 @@ export function TypeRowView({ ds, id, onPick, onInfo, depth = 0 }: { ds: Dataset
   );
 }
 
-export function Market({ ds, onPick, onInfo }: { ds: Dataset; onPick: (t: number) => void; onInfo: (t: number) => void }) {
+export function Market({ ds, engine, onPick, onInfo }: { ds: Dataset; engine?: Engine | null; onPick: (t: number) => void; onInfo: (t: number) => void }) {
   const [q, setQ] = useState('');
   const [kf, setKf] = useState(0);
-  const results = useMemo(() => (q.trim().length >= 2 ? ds.search(q, 80, KIND_FILTERS[kf][1] ?? undefined) : []), [ds, q, kf]);
+  const [engineIds, setEngineIds] = useState<number[] | null>(null);
+  // Pyfa-parity search: the engine's market.search does abbreviation shorthand (lse, 5mn mwd, dc ii) and re:
+  // patterns; the local index stays as the fallback while the engine is off or busy.
+  useEffect(() => {
+    const query = q.trim();
+    if (query.length < 2 || !engine?.rpcRaw) { setEngineIds(null); return; }
+    let live = true;
+    const h = setTimeout(() => {
+      engine.rpcRaw!('market.search', { query, filter: 'everything' }).then((r) => {
+        if (live) setEngineIds(r?.result?.type_ids ?? null);
+      }).catch(() => { if (live) setEngineIds(null); });
+    }, 150);
+    return () => { live = false; clearTimeout(h); };
+  }, [q, engine]);
+  const kinds = KIND_FILTERS[kf][1] ?? undefined;
+  const base = q.trim().length >= 2 ? (engineIds ?? ds.search(q, 80, KIND_FILTERS[kf][1] ?? undefined)) : [];
+  const results = kinds ? base.filter((id) => kinds.includes(ds.kind(id))) : base.slice(0, 80);
   return (
     <div className="market">
       <input className="search" placeholder={tr('Search items (English / 中文)…')} value={q} onChange={(e) => setQ(e.target.value)} />
@@ -87,6 +106,7 @@ export function ItemInfo({ ds, id, onClose, fitted, fittedNote, overrides, onOve
     <div className="modal" onClick={onClose}>
       <div className="dialog" onClick={(e) => e.stopPropagation()}>
         <h2>{ds.name(id)} <small className="muted">#{id} · {ds.groupName(t.group)}</small></h2>
+        {ds.description(id) && <p className="desc">{stripTags(ds.description(id)!)}</p>}
         {traits && (
           <div className="traits">
             {Object.entries(traits.skills ?? {}).map(([sk, bs]) => (

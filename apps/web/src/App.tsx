@@ -5,8 +5,7 @@ import { Dataset } from './data/dataset';
 import { createEngine, enginePricesLoad, type Engine, type FitStats } from './engine/adapter';
 import { fetchLatestSnapshot, loadPriceSettings, savePriceSettings, PRICE_REFRESH_MS, SNAPSHOT_URL, type PriceSettings } from './data/prices';
 import { formatsRpc, importFit, initFormats } from './formats';
-import { defaultState } from './fit/states';
-import { newFit, toRequest, type Fit, type Library } from './fit/model';
+import { addItemToFit, newFit, toRequest, type Fit, type Library } from './fit/model';
 import { libraryReady, useAppState } from './store';
 import { CharacterEditor } from './ui/Character';
 import { EngineSettings } from './ui/EngineSettings';
@@ -249,37 +248,8 @@ export default function App() {
     const k = ds.kind(id);
     if (k === 'ship' || k === 'structure') { addFit(newFit(id, `${ds.name(id, 'en')} fit`)); return; }
     if (!fit) return;
-    if (ds.raw.environment?.effect_beacons?.[id]) { setFit({ ...fit, environment: [...new Set([...fit.environment, id])] }); return; }
-    if (addProjected && (k === 'module' || k === 'drone' || k === 'fighter')) {
-      setFit({ ...fit, projected: [...fit.projected, { kind: k, type_id: id, state: 'active', quantity: k === 'fighter' ? ds.attr(id, 'fighterSquadronMaxSize') ?? 1 : 1, amount: 1, distance_m: 5000 }] });
-      return;
-    }
-    switch (k) {
-      case 'module': case 'subsystem': {
-        const slot = ds.slot(id);
-        if (!slot) return;
-        let modules = fit.modules;
-        if (slot === 'subsystem') { const sub = ds.attr(id, 'subSystemSlot'); modules = modules.filter((m) => m.slot !== 'subsystem' || ds.attr(m.type_id, 'subSystemSlot') !== sub); }
-        setFit({ ...fit, modules: [...modules, { type_id: id, slot, state: defaultState(ds, id), charge_type_id: null }] });
-        return;
-      }
-      case 'charge': {
-        const ok = fit.modules.map((m) => ds.chargesFor(m.type_id).includes(id));
-        if (ok.some(Boolean)) setFit({ ...fit, modules: fit.modules.map((m, i) => (ok[i] ? { ...m, charge_type_id: id } : m)) });
-        else setFit({ ...fit, cargo: [...fit.cargo, { type_id: id, quantity: 1 }] });
-        return;
-      }
-      case 'drone': {
-        const ex = fit.drones.findIndex((d) => d.type_id === id);
-        if (ex >= 0) setFit({ ...fit, drones: fit.drones.map((d, i) => (i === ex ? { ...d, quantity: d.quantity + 1, active: d.active + 1 } : d)) });
-        else setFit({ ...fit, drones: [...fit.drones, { type_id: id, quantity: 1, active: 1 }] });
-        return;
-      }
-      case 'fighter': setFit({ ...fit, fighters: [...fit.fighters, { type_id: id, quantity: ds.attr(id, 'fighterSquadronMaxSize') ?? 1, active: true }] }); return;
-      case 'implant': { const s = ds.attr(id, 'implantness'); setFit({ ...fit, implants: [...fit.implants.filter((x) => ds.attr(x, 'implantness') !== s), id] }); return; }
-      case 'booster': { const s = ds.attr(id, 'boosterness'); setFit({ ...fit, boosters: [...fit.boosters.filter((x) => ds.attr(x.type_id, 'boosterness') !== s), { type_id: id }] }); return; }
-      default: setInfo(id);
-    }
+    const next = addItemToFit(ds, fit, id, addProjected);
+    if (next) setFit(next); else setInfo(id);
   };
 
   if (!ds) return <div className="loading"><h1>EXFA Web</h1><p>{loadMsg}</p></div>;
@@ -300,7 +270,7 @@ export default function App() {
       <main>
         <aside className="left">
           <Tabs tabs={[['market', t('Market')], ['fits', `${t('Fits')} (${Object.keys(lib.fits).length})`], ['char', t('Character')], ['profiles', t('Profiles')], ['about', t('About')]]} value={left} onChange={setLeft} />
-          {left === 'market' && <Market ds={ds} onPick={pick} onInfo={setInfo} />}
+          {left === 'market' && <Market ds={ds} engine={engineReady ? engineRef.current : null} onPick={pick} onInfo={setInfo} />}
           {left === 'fits' && <FitBrowser ds={ds} lib={lib} activeId={fit?.id ?? null} status={storeStatus}
             onOpen={(id) => update((s) => ({ ...s, settings: { ...s.settings, activeFitId: id } }))} onLib={setLib} />}
           {left === 'char' && <CharacterEditor ds={ds} lib={lib} fit={fit} onLib={setLib} />}
