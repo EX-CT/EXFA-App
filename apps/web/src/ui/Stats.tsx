@@ -110,6 +110,7 @@ export const VIOLATION_LABEL: Record<string, string> = {
   RIG_SIZE: 'Wrong rig size', SHIP_RESTRICTION: 'Not allowed on this ship', NOT_FITTABLE: 'Not a fittable module', MAX_TYPE_FITTED: 'Too many of this type',
   MAX_GROUP_FITTED: 'Too many of this group', MAX_GROUP_ONLINE: 'Too many of this group online', MAX_GROUP_ACTIVE: 'Too many of this group active',
   CHARGE_GROUP: 'Charge does not fit this module', CHARGE_SIZE: 'Wrong charge size', CHARGE_CAPACITY: 'Charge too large for the module', MISSING_SKILL: 'Missing skill',
+  DRONE_BAY: 'Drone bay exceeded', FIGHTER_BAY: 'Fighter bay exceeded', CARGO_OVERLOAD: 'Cargo exceeded', FIGHTER_TUBES: 'Fighter tubes exceeded',
 };
 
 const nz = (o: Record<string, number> | undefined) => !!o && Object.values(o).some((v) => typeof v === 'number' && v > 0);
