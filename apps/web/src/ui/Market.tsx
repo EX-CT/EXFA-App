@@ -160,7 +160,7 @@ export function ItemInfo({ ds, id, ctx, onClose, fitted, fittedNote, overrides, 
           {vars.map((v) => (
             <span key={v} className="vchipwrap">
               <button className={'vchip' + (v === id ? ' on' : '')} onClick={() => onShow?.(v)}>{ds.name(v)}</button>
-              {onSwap && ctx?.module != null && v !== id && <button className="vswap" title={tr('Swap fitted module')} onClick={() => onSwap(v)}>⇄</button>}
+              {onSwap && ctx?.module != null && v !== id && <button className="vswap" title={tr('Swap fitted module')} onClick={() => onSwap(v)}>{tr('Swap')}</button>}
             </span>
           ))}
         </div>

@@ -6,11 +6,11 @@ import type { Dataset, Slot } from '../data/dataset';
 import { addItemToFit, draggedType, moveModule, type Fit, type FitModule, type Library, type ModState } from '../fit/model';
 import { allowedStates } from '../fit/states';
 import type { FitStats } from '../engine/adapter';
-import { FloatMenu, fmt, Tabs, TypeIcon } from './common';
+import { FloatMenu, fmt, Popover, Tabs, TypeIcon } from './common';
 import { applyImplantSet, saveUserImplantSets, useSdePresets, userImplantSets, type ImplantSet } from '../data/sdePresets';
 
 const SLOTS: [Slot, string][] = [['high', 'High slots'], ['mid', 'Mid slots'], ['low', 'Low slots'], ['rig', 'Rigs'], ['subsystem', 'Subsystems'], ['service', 'Services']];
-const STATE_ICON: Record<ModState, string> = { offline: '○', online: '◐', active: '●', overheated: '🔥' };
+const STATE_ICON: Record<ModState, string> = { offline: '○', online: '◐', active: '●', overheated: 'HOT' };
 
 export interface FitProps {
   ds: Dataset; fit: Fit; lib: Library; stats: FitStats | null;
@@ -40,8 +40,8 @@ function CtxMenu({ x, y, ds, m, vars, nIdentical, grouped, onGroup, onInfo, onCh
     <FloatMenu x={x} y={y} onClose={onClose}>
       <div className="ctxhead">{ds.name(m.type_id)}</div>
       <button onClick={() => { onInfo(m.type_id); onClose(); }}>{t('Show info')}</button>
-      {(nIdentical ?? 0) > 1 && <button onClick={() => { onGroup!(); onClose(); }}>⛓ {t('Group identical modules')} (×{nIdentical})</button>}
-      {grouped && <button onClick={() => { onChange({ group: null }); onClose(); }}>⛓ {t('Ungroup')}</button>}
+      {(nIdentical ?? 0) > 1 && <button onClick={() => { onGroup!(); onClose(); }}>{t('Group identical modules')} (×{nIdentical})</button>}
+      {grouped && <button onClick={() => { onChange({ group: null }); onClose(); }}>{t('Ungroup')}</button>}
       {vars.length > 1 && (
         <div className="ctxgroup">
           <div className="ctxlabel">{t('Variations')}</div>
@@ -102,7 +102,7 @@ function ModuleRow({ ds, m, idx, grp, fit, stats, onChange, onInfo, menu, setMen
 
       <button className={'state s-' + m.state} onClick={() => cycle(1)} title={`${t(m.state)} (${t('click: next state')})`}>{STATE_ICON[m.state]}</button>
       <TypeIcon id={m.mutation?.base_type_id ?? m.type_id} size={18} />
-      <span className="mname" onClick={() => onInfo(m.type_id, { module: idx })}>{grp && <b className="gcount" title={t('grouped modules')}>×{grp.length} </b>}{ds.name(m.type_id)}{m.mutation ? ' ✦' : ''}</span>
+      <span className="mname" onClick={() => onInfo(m.type_id, { module: idx })}>{grp && <b className="gcount" title={t('grouped modules')}>×{grp.length} </b>}{ds.name(m.type_id)}{m.mutation ? ' [M]' : ''}</span>
       {m.charge_type_id ? <TypeIcon id={m.charge_type_id} size={18} /> : null}
       {charges.length > 0 && (
         <select value={m.charge_type_id ?? ''} onChange={(e) => set({ charge_type_id: e.target.value ? +e.target.value : null })}>
@@ -116,8 +116,8 @@ function ModuleRow({ ds, m, idx, grp, fit, stats, onChange, onInfo, menu, setMen
           {[0, 0.25, 0.5, 0.75, 1].map((v) => <option key={v} value={v}>{t('spool')} {v * 100}%</option>)}
         </select>
       )}
-      {mutas.length > 0 && <button className="mini" onClick={() => setShowMuta(!showMuta)} title={t('Mutaplasmid')}>✦</button>}
-      {modStats?.heat && <span className="heat" title={`${t('expected overheat burnout')}: ${modStats.heat.burn_cycles} ${t('cycles')}`}>🔥 {fmtBurn(modStats.heat.burnout_s)}</span>}
+      {mutas.length > 0 && <button className="mini" onClick={() => setShowMuta(!showMuta)} title={t('Mutaplasmid')}>M</button>}
+      {modStats?.heat && <span className="heat" title={`${t('expected overheat burnout')}: ${modStats.heat.burn_cycles} ${t('cycles')}`}>{t('Heat')} {fmtBurn(modStats.heat.burnout_s)}</span>}
       <span className="mcols">
         {modStats?.power != null && modStats.power > 0 && <span className="mc" title={t('powergrid (MW)')}>{fmt(modStats.power, 1) + ' MW'}</span>}
         {modStats?.cpu != null && modStats.cpu > 0 && <span className="mc" title={t('cpu (tf)')}>{fmt(modStats.cpu, 1) + ' tf'}</span>}
@@ -174,6 +174,8 @@ function Qty({ value, onChange, min = 0, max = 999 }: { value: number; onChange:
 function ImplantSets({ ds, fit, onChange }: FitProps) {
   const sde = useSdePresets();
   const [user, setUser] = useState<ImplantSet[]>(userImplantSets);
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [setName, setSetName] = useState('');
   const slotOf = (id: number) => ds.attr(id, 'implantness') ?? undefined;
   const label = (s: ImplantSet) => {
     if (s.user || ds.lang !== 'zh') return s.name + (s.complete || s.user ? '' : ` (${s.members.length}/6)`);
@@ -182,13 +184,12 @@ function ImplantSets({ ds, fit, onChange }: FitProps) {
   };
   const all = [...user, ...sde.implant_sets];
   const apply = (id: string) => { const s = all.find((x) => x.id === id); if (s) onChange({ ...fit, implants: applyImplantSet(fit.implants, s, slotOf) }); };
-  const save = () => {
+  const save = (name: string) => {
     if (!fit.implants.length) return;
-    const name = prompt(t('Name for this implant set'), t('My implants'));
-    if (!name) return;
+    if (!name.trim()) return;
     const set: ImplantSet = { id: 'user:' + Math.random().toString(36).slice(2, 8), name, grade: null, complete: true, user: true,
       members: fit.implants.map((id) => ({ type_id: id, slot: slotOf(id) ?? 0 })) };
-    const next = [...user, set]; setUser(next); saveUserImplantSets(next);
+    const next = [...user, set]; setUser(next); saveUserImplantSets(next); setSaveOpen(false); setSetName('');
   };
   const delUser = (id: string) => { const next = user.filter((x) => x.id !== id); setUser(next); saveUserImplantSets(next); };
   if (!all.length && !fit.implants.length) return null;
@@ -199,7 +200,16 @@ function ImplantSets({ ds, fit, onChange }: FitProps) {
         {user.length > 0 && <optgroup label={t('Saved sets')}>{user.map((s) => <option key={s.id} value={s.id}>{label(s)}</option>)}</optgroup>}
         {sde.implant_sets.length > 0 && <optgroup label={t('Pirate / faction sets (SDE)')}>{sde.implant_sets.map((s) => <option key={s.id} value={s.id}>{label(s)}</option>)}</optgroup>}
       </select>
-      {fit.implants.length > 0 && <button className="mini saveset" onClick={save}>{t('Save implants as set')}</button>}
+      {fit.implants.length > 0 && <div className="popover-anchor">
+        <button className="mini saveset" onClick={() => { setSetName(t('My implants')); setSaveOpen(true); }}>{t('Save implants as set')}</button>
+        <Popover open={saveOpen} onClose={() => setSaveOpen(false)} className="implant-popover">
+          <form onSubmit={(e) => { e.preventDefault(); save(setName); }}>
+            <label>{t('Name for this implant set')}</label>
+            <input autoFocus value={setName} onChange={(e) => setSetName(e.target.value)} />
+            <button>{t('Save')}</button><button type="button" onClick={() => setSaveOpen(false)}>{t('Cancel')}</button>
+          </form>
+        </Popover>
+      </div>}
       {user.length > 0 && <select className="delset" value="" onChange={(e) => e.target.value && delUser(e.target.value)} title={t('Delete saved set')}>
         <option value="">{t('Delete saved set…')}</option>{user.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select>}
     </div>
@@ -375,13 +385,13 @@ export function Fitting(p: FitProps & { addProjected: boolean; setAddProjected: 
           </select>
         )}
         <select value={fit.character_id} onChange={(e) => onChange({ ...fit, character_id: e.target.value })} title={t('Character')}>
-          {Object.values(lib.characters).map((c) => <option key={c.id} value={c.id}>👤 {c.name}</option>)}
+          {Object.values(lib.characters).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
         <select value={fit.damage_pattern_id} onChange={(e) => onChange({ ...fit, damage_pattern_id: e.target.value })} title={t('Damage pattern (incoming)')}>
-          {Object.values(lib.damagePatterns).filter((d) => !d.id.startsWith('sde:') || d.id === fit.damage_pattern_id).map((d) => <option key={d.id} value={d.id}>🛡 {d.name}</option>)}
+          {Object.values(lib.damagePatterns).filter((d) => !d.id.startsWith('sde:') || d.id === fit.damage_pattern_id).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
         </select>
         <select value={fit.target_profile_id} onChange={(e) => onChange({ ...fit, target_profile_id: e.target.value })} title={t('Target profile (outgoing)')}>
-          {Object.values(lib.targetProfiles).filter((x) => !x.id.startsWith('sde:') || x.id === fit.target_profile_id).map((x) => <option key={x.id} value={x.id}>🎯 {x.name}</option>)}
+          {Object.values(lib.targetProfiles).filter((x) => !x.id.startsWith('sde:') || x.id === fit.target_profile_id).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
         </select>
       </div>
       <Tabs tabs={[['fit', t('Fitting')], ['proj', `${t('Projected / fleet / environment')} (${fit.projected.length + fit.fleet.booster_fit_ids.length + fit.environment.length})`], ['opts', t('Options')]]} value={tab} onChange={setTab} />

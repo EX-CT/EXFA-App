@@ -1,14 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { loadSdePresets } from './data/sdePresets';
 import { setUiLang, t } from './i18n';
 import { Dataset } from './data/dataset';
 import { createEngine, enginePricesLoad, type Engine, type FitStats } from './engine/adapter';
 import { fetchLatestSnapshot, loadPriceSettings, savePriceSettings, PRICE_REFRESH_MS, SNAPSHOT_URL, type PriceSettings } from './data/prices';
-import { formatsRpc, importFit, initFormats } from './formats';
+import { importFit, setEngineFormatsRpc } from './formats';
 import { addItemToFit, newFit, toRequest, type Fit, type Library } from './fit/model';
-import { libraryReady, useAppState } from './store';
+import { useAppState } from './store';
 import { CharacterEditor } from './ui/Character';
-import { EngineSettings } from './ui/EngineSettings';
 import { Fitting } from './ui/Fitting';
 import { Graphs } from './ui/Graphs';
 import { Compare } from './ui/Compare';
@@ -20,9 +19,8 @@ import { PriceBox, type SnapshotState } from './ui/PriceBox';
 import { Profiles } from './ui/Profiles';
 import { About, type BuildInfo } from './ui/About';
 import { Stats } from './ui/Stats';
-import { Tabs } from './ui/common';
-
-const PRICE_BACKENDS = ['wasm-worker', 'http'];
+import { Popover, Tabs } from './ui/common';
+import { notify, ToastViewport } from './ui/notify';
 
 const DEMO_EFT = `[Rifter, Demo Rifter]
 Gyrostabilizer II
@@ -50,12 +48,16 @@ export default function App() {
   const [engineStatus, setEngineStatus] = useState(t('starting engine…'));
   const engineRef = useRef<Engine | null>(null);
   const [engineReady, setEngineReady] = useState(0);
+  const [datasetMs, setDatasetMs] = useState<number | null>(null);
+  const [engineMs, setEngineMs] = useState<number | null>(null);
+  const [firstCalcMs, setFirstCalcMs] = useState<number | null>(null);
+  const firstCalcSeen = useRef(false);
   const [stats, setStats] = useState<FitStats | null>(null);
   const [calcErr, setCalcErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [ms, setMs] = useState<number | null>(null);
-  const [left, setLeft] = useState<'market' | 'fits' | 'char' | 'profiles' | 'about'>('market');
-  const [center, setCenter] = useState<'fit' | 'graphs' | 'compare' | 'whatif'>('fit');
+  const [left, setLeft] = useState<'market' | 'fits' | 'char' | 'profiles'>('market');
+  const [dockTab, setDockTab] = useState<'strip' | 'graphs' | 'compare' | 'import-export' | 'whatif'>('strip');
   const [infoState, setInfoState] = useState<{ id: number; ctx?: InfoCtx } | null>(null);
   const [fitted, setFitted] = useState<Record<string, number> | null | undefined>(undefined);
   const [fittedNote, setFittedNote] = useState<string | undefined>(undefined);
@@ -75,9 +77,7 @@ export default function App() {
     setFit({ ...fit, modules: fit.modules.map((m, i) => (members.has(i) ? { ...m, type_id: v, mutation: null } : m)) });
     setInfo(v, ctx);
   };
-  const [showIO, setShowIO] = useState(false);
   const [build, setBuild] = useState<BuildInfo | null>(null);
-  const [graphBackend, setGraphBackend] = useState<string | null>(null);
   useEffect(() => { fetch(`${import.meta.env.BASE_URL}build-info.json`).then((r) => (r.ok ? r.json() : null)).then(setBuild, () => {}); }, []);
   // SDE-derived NPC damage / target profiles (EXFA-Data presets.json) join the built-in profiles (not persisted).
   useEffect(() => { loadSdePresets().then((p) => update((s) => ({ ...s, lib: { ...s.lib,
@@ -93,41 +93,35 @@ export default function App() {
   const { lib, settings } = state;
   const fit = settings.activeFitId ? lib.fits[settings.activeFitId] ?? null : null;
 
-  // dataset (UI copy) from the pipeline release, deployed with the site
+  // Dataset and Engine initialize independently so the shell can report each startup phase.
   useEffect(() => {
-    // the formats layer (exfa-formats WASM, same engine release as exfa_wasm.wasm) does NOT gate
-    // startup — the built-in TS parsers cover eft/dna/esi meanwhile, and the wasm module lands a
-    // moment later. It IS awaited when the URL carries an import (?eft=/?dna=/…), where rarer
-    // formats may need it. ?formats=builtin forces the built-in TypeScript parsers.
-    const fq = new URLSearchParams(location.search).get('formats');
-    const formatsUrl = fq === 'builtin' ? null : new URL(`${import.meta.env.BASE_URL}engines/f/exfa_formats_wasm.wasm`, location.href).href;
-    const hasImportParam = /[?&](eft|dna|fit|xml|eftcfg|dnaalt)=/i.test(location.search);
-    const formatsReady = initFormats(formatsUrl).then((fs) => { (window as any).__eveFormats = fs; (window as any).__eveFormatsRpc = formatsRpc(); return fs; });
-    Promise.all([Dataset.load(settings.engine.datasetUrl, setLoadMsg), hasImportParam ? formatsReady : Promise.resolve(null), libraryReady])
-      .then(([d]) => { d.lang = settings.lang; setDs(d); }, (e) => setLoadMsg(`${t('failed to load dataset')}: ${e.message}`));
+    const started = performance.now();
+    Dataset.load(settings.engine.datasetUrl, setLoadMsg).then((d) => {
+      d.lang = settings.lang;
+      setDatasetMs(performance.now() - started);
+      setDs(d);
+    }, (e) => setLoadMsg(`${t('failed to load dataset')}: ${e.message}`));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // engine backend (swappable at runtime)
+  // The single Engine WASM worker owns calc, graph, price and format RPCs.
   const ecfg = settings.engine;
   useEffect(() => {
     const eng = createEngine(ecfg);
     engineRef.current = eng;
-    setEngineStatus(`starting ${eng.info.id}…`);
+    const started = performance.now();
     let alive = true;
-    eng.init().then((s) => { if (alive) { setEngineStatus(`✔ ${s}`); setEngineReady((n) => n + 1); (window as any).__eveEngine = eng; } }, (e) => alive && setEngineStatus(`✖ ${eng.info.id}: ${e.message}`));
+    setEngineStatus(t('starting engine…'));
+    eng.init().then((s) => {
+      if (!alive) return;
+      setEngineMs(performance.now() - started);
+      setEngineStatus(`${t('Ready')}: ${s}`);
+      if (eng.rpcRaw) setEngineFormatsRpc((method, params) => eng.rpcRaw!(method, params));
+      setEngineReady((n) => n + 1);
+      (window as any).__eveEngine = eng;
+    }, (e) => alive && setEngineStatus(`${t('Error')}: ${eng.info.id}: ${e.message}`));
     return () => { alive = false; eng.dispose(); };
-  }, [ecfg.backend, ecfg.httpUrl, ecfg.datasetUrl, ecfg.wasmUrl]);
-
-  // which backend answers graph requests (own graph RPC, GRAPH_FALLBACK, or none = UI approximations)
-  useEffect(() => {
-    setGraphBackend(null);
-    const eng = engineRef.current;
-    if (!engineReady || !eng?.graphSpecs) return;
-    let alive = true;
-    eng.graphSpecs().then((sp) => alive && setGraphBackend(sp ? eng.graphInfo?.id ?? eng.info.id : null), () => {});
-    return () => { alive = false; };
-  }, [engineReady]);
+  }, [ecfg.datasetUrl, ecfg.wasmUrl]);
 
   const setLib = useCallback((l: Library) => update((s) => ({ ...s, lib: l })), [update]);
   const putFit = useCallback((f: Fit) => update((s) => ({ ...s, lib: { ...s.lib, fits: { ...s.lib.fits, [f.id]: { ...f, modified: new Date().toISOString() } } } })), [update]);
@@ -166,40 +160,54 @@ export default function App() {
   }, [undoRedo]);
   const addFit = useCallback((f: Fit) => { const now = new Date().toISOString(); f = { ...f, created: f.created ?? now, modified: f.modified ?? now }; update((s) => ({ ...s, lib: { ...s.lib, fits: { ...s.lib.fits, [f.id]: f } }, settings: { ...s.settings, activeFitId: f.id } })); }, [update]);
 
-  // first visit / ?dna= / ?eft= : seed a fit so the page computes something right away
+  // First visit / share link: format input is parsed by the Engine worker before the first calc.
   useEffect(() => {
-    if (!ds) return;
-    const q = new URLSearchParams(location.search);
-    try {
-      if (q.get('dna')) { addFit(importFit(ds, q.get('dna')!, 'dna')); return; }
-      if (q.get('eft')) { addFit(importFit(ds, q.get('eft')!, 'eft')); return; }
-    } catch (e) { console.warn(e); }
-    if (!Object.keys(lib.fits).length) addFit(importFit(ds, DEMO_EFT, 'eft'));
-    else if (!fit) update((s) => ({ ...s, settings: { ...s.settings, activeFitId: Object.keys(s.lib.fits)[0] } }));
+    if (!ds || !engineReady || storeStatus.kind === 'loading') return;
+    let alive = true;
+    void (async () => {
+      const q = new URLSearchParams(location.search);
+      try {
+        if (q.get('dna')) { const imported = await importFit(ds, q.get('dna')!, 'dna'); if (alive) addFit(imported); return; }
+        if (q.get('eft')) { const imported = await importFit(ds, q.get('eft')!, 'eft'); if (alive) addFit(imported); return; }
+        const current = stateRef.current;
+        if (!Object.keys(current.lib.fits).length) { const demo = await importFit(ds, DEMO_EFT, 'eft'); if (alive) addFit(demo); }
+        else if (!current.settings.activeFitId || !current.lib.fits[current.settings.activeFitId]) {
+          update((s) => ({ ...s, settings: { ...s.settings, activeFitId: Object.keys(s.lib.fits)[0] } }));
+        }
+      } catch (e) {
+        if (alive) setLoadMsg(`${t('failed to load fit')}: ${(e as Error).message}`);
+      }
+    })();
+    return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ds]);
+  }, [ds, engineReady, storeStatus.kind]);
 
-  // backends with the docs/23 price block (engine F: in-browser WASM, or a native F behind the HTTP bridge)
-  const pricing = PRICE_BACKENDS.includes(ecfg.backend);
   const request = useMemo(() => {
     if (!fit) return null;
     const r = toRequest(fit, lib);
-    return pricing ? { ...r, options: { ...(r.options as object), price: true }, ...(priceSet.mine.length ? { price_overrides: priceSet.mine } : {}) } : r;
-  }, [fit, lib, pricing, priceSet.mine]);
+    return { ...r, options: { ...(r.options as object), price: true }, ...(priceSet.mine.length ? { price_overrides: priceSet.mine } : {}) };
+  }, [fit, lib, priceSet.mine]);
   const reqJson = useMemo(() => JSON.stringify(request), [request]);
 
   // stateless calc on every change (debounced, latest wins)
   const seq = useRef(0);
   useEffect(() => {
-    if (!request || !engineReady || !engineRef.current) return;
     const my = ++seq.current;
+    if (!request) {
+      setStats(null); setCalcErr(null); setBusy(false); setMs(0);
+      (window as any).__lastStats = null; (window as any).__lastStatsFit = null; (window as any).__lastRequest = null;
+      return;
+    }
+    if (!engineReady || !engineRef.current) return;
     const fitId = settings.activeFitId;
     const t = setTimeout(() => {
       setBusy(true);
       const t0 = performance.now();
       engineRef.current!.calc(request).then((r) => {
         if (my !== seq.current) return;
-        setStats(r); setCalcErr(null); setMs(performance.now() - t0); setBusy(false);
+        const elapsed = performance.now() - t0;
+        setStats(r); setCalcErr(null); setMs(elapsed); setBusy(false);
+        if (!firstCalcSeen.current) { firstCalcSeen.current = true; setFirstCalcMs(elapsed); }
         (window as any).__lastStats = r; (window as any).__lastStatsFit = fitId; (window as any).__lastRequest = request;
       }, (e) => { if (my === seq.current) { setCalcErr(e.message); setBusy(false); } });
     }, 60);
@@ -212,7 +220,7 @@ export default function App() {
   // when it changed; a failed re-poll keeps the previously injected snapshot.
   useEffect(() => {
     const eng = engineRef.current;
-    if (!engineReady || !eng || !pricing) { setSnapState({ state: 'off' }); return; }
+    if (!engineReady || !eng) { setSnapState({ state: 'off' }); return; }
     let alive = true;
     if (!priceSet.update) {
       setSnapState({ state: 'off' });
@@ -238,7 +246,7 @@ export default function App() {
     const iv = setInterval(() => pull(true), PRICE_REFRESH_MS);
     return () => { alive = false; clearInterval(iv); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [engineReady, priceSet.update, pricing]);
+  }, [engineReady, priceSet.update]);
 
   // "Show info" on a fitted item: one extra calc with include_attributes=all
   useEffect(() => {
@@ -269,57 +277,175 @@ export default function App() {
     const next = addItemToFit(ds, fit, id, addProjected);
     if (next) setFit(next); else setInfo(id);
   };
+  const writeBackAdjustments = () => {
+    if (!fit || !stats?.adjustments?.length) return;
+    const previous = fit;
+    let next = { ...fit };
+    let count = 0;
+    const implants = new Set<number>(), boosters = new Set<number>();
+    for (const adjustment of stats.adjustments as { code: string; path: string; to: unknown }[]) {
+      let match: RegExpMatchArray | null;
+      if (adjustment.code === 'STATE_CLAMPED' && (match = adjustment.path.match(/^\/modules\/(\d+)\/state$/))) {
+        const index = Number(match[1]), state = adjustment.to as Fit['modules'][number]['state'];
+        if (next.modules[index] && next.modules[index].state !== state) {
+          next = { ...next, modules: next.modules.map((m, i) => i === index ? { ...m, state } : m) }; count++;
+        }
+      } else if (adjustment.code === 'FIGHTER_QUANTITY_CLAMPED' && (match = adjustment.path.match(/^\/fighters\/(\d+)\/quantity$/))) {
+        const index = Number(match[1]), quantity = Number(adjustment.to);
+        if (next.fighters[index] && next.fighters[index].quantity !== quantity) {
+          next = { ...next, fighters: next.fighters.map((f, i) => i === index ? { ...f, quantity } : f) }; count++;
+        }
+      } else if (adjustment.code === 'FIGHTER_QUANTITY_CLAMPED' && (match = adjustment.path.match(/^\/projected\/(\d+)\/fighter\/quantity$/))) {
+        const index = Number(match[1]), quantity = Number(adjustment.to);
+        if (next.projected[index]?.kind === 'fighter' && next.projected[index].quantity !== quantity) {
+          next = { ...next, projected: next.projected.map((p, i) => i === index ? { ...p, quantity } : p) }; count++;
+        }
+      } else if (adjustment.code === 'SLOT_OCCUPIED_SKIPPED' && (match = adjustment.path.match(/^\/implants\/(\d+)$/))) {
+        implants.add(Number(match[1]));
+      } else if (adjustment.code === 'SLOT_OCCUPIED_SKIPPED' && (match = adjustment.path.match(/^\/boosters\/(\d+)\/type_id$/))) {
+        boosters.add(Number(match[1]));
+      } else if (adjustment.code === 'MODE_DEFAULTED' && adjustment.path === '/ship/mode_type_id') {
+        const mode = adjustment.to == null ? null : Number(adjustment.to);
+        if (next.mode_type_id !== mode) { next = { ...next, mode_type_id: mode }; count++; }
+      } else if (adjustment.code === 'SECURITY_DEFAULTED' && adjustment.path === '/environment/system_security') {
+        if (next.system_security !== null) { next = { ...next, system_security: null }; count++; }
+      }
+    }
+    if (implants.size) {
+      const remaining = next.implants.filter((_, i) => !implants.has(i));
+      count += next.implants.length - remaining.length;
+      next = { ...next, implants: remaining };
+    }
+    if (boosters.size) {
+      const remaining = next.boosters.filter((_, i) => !boosters.has(i));
+      count += next.boosters.length - remaining.length;
+      next = { ...next, boosters: remaining };
+    }
+    if (!count) return;
+    setFit(next);
+    const text = count === 1
+      ? t('Applied one correction to the fit')
+      : t('Applied {n} corrections to the fit').replace('{n}', String(count));
+    notify({ kind: 'info', text, ms: 6000,
+      action: { label: t('Undo'), onClick: () => setFit(previous) } });
+  };
 
-  if (!ds) return <div className="loading"><h1>EXFA Web</h1><p>{loadMsg}</p></div>;
-  const setLang = (l: 'en' | 'zh') => { ds.lang = l; update((s) => ({ ...s, settings: { ...s.settings, lang: l } })); };
-  ds.lang = settings.lang;
+  const [aboutOpen, setAboutOpen] = useState(false);
+  const setLang = (l: 'en' | 'zh') => { if (ds) ds.lang = l; update((s) => ({ ...s, settings: { ...s.settings, lang: l } })); };
+  if (ds) ds.lang = settings.lang;
   setUiLang(settings.lang);
+  const setDockHeight = (dockHeight: number) => update((s) => ({ ...s, settings: { ...s.settings, dockHeight } }));
+  const setInfoHeight = (infoHeight: number) => update((s) => ({ ...s, settings: { ...s.settings, infoHeight } }));
+  const updateSettings = (patch: Partial<typeof settings>) => update((s) => ({ ...s, settings: { ...s.settings, ...patch } }));
+  const beginResize = (e: ReactPointerEvent<HTMLDivElement>, area: 'dock' | 'info') => {
+    e.preventDefault();
+    const box = document.querySelector(area === 'dock' ? '.center' : '.left');
+    if (!box) return;
+    const startY = e.clientY, rect = box.getBoundingClientRect();
+    const start = area === 'dock' ? settings.dockHeight : settings.infoHeight;
+    const move = (ev: globalThis.PointerEvent) => {
+      const delta = startY - ev.clientY;
+      if (area === 'dock') setDockHeight(Math.max(18, Math.min(76, start + delta / rect.height * 100)));
+      else setInfoHeight(Math.max(96, Math.min(rect.height * 0.62, start + delta)));
+    };
+    const end = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', end);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', end, { once: true });
+  };
+  const phase = firstCalcMs != null ? 'ready' : !datasetMs ? 'dataset' : !engineMs ? 'engine' : 'calc';
+  const progress = phase === 'ready' ? 100 : phase === 'dataset' ? 18 : phase === 'engine' ? 52 : 82;
   return (
     <div className="app">
       <header>
-        <h1>EXFA Web</h1>
-        <span className="muted">SDE {ds.build}{ds.raw.dataset_revision ? ` r${ds.raw.dataset_revision}` : ''}</span>
-        <EngineSettings cfg={settings.engine} status={engineStatus} onChange={(c) => update((s) => ({ ...s, settings: { ...s.settings, engine: c } }))} />
+        <div className="brand-wrap">
+          <button className="brand" onClick={() => setAboutOpen((open) => !open)} aria-label={t('About EXFA')} aria-expanded={aboutOpen}>
+            <img src={`${import.meta.env.BASE_URL}exfa-32.png`} alt="" />EXFA
+          </button>
+          {ds && <Popover open={aboutOpen} onClose={() => setAboutOpen(false)} className="about-popover">
+            <About status={engineStatus} st={stats} ds={ds} build={build} datasetMs={datasetMs} engineMs={engineMs} firstCalcMs={firstCalcMs} />
+          </Popover>}
+        </div>
+        <span className="header-meta">{ds ? `SDE ${ds.build}${ds.raw.dataset_revision ? ` r${ds.raw.dataset_revision}` : ''} · ${engineStatus}` : `${loadMsg} · ${engineStatus}`}</span>
         <button className="undo" title={t('Undo (Ctrl+Z)')} disabled={!(fit && hist.current[fit.id]?.past.length)} onClick={() => undoRedo('undo')}>{t('↶ Undo')}</button>
         <button className="redo" title={t('Redo (Ctrl+Y)')} disabled={!(fit && hist.current[fit.id]?.future.length)} onClick={() => undoRedo('redo')}>{t('↷ Redo')}</button>
-        <button onClick={() => setShowIO(true)}>{t('Import / export')}</button>
         <select value={settings.lang} onChange={(e) => setLang(e.target.value as 'en' | 'zh')}><option value="en">English</option><option value="zh">中文</option></select>
       </header>
-      <main>
+      <div className={`startup-progress phase-${phase}`} aria-label={t('Startup progress')}
+        title={t(phase === 'dataset' ? 'Loading dataset' : phase === 'engine' ? 'Starting Engine' : phase === 'calc' ? 'Calculating first fit' : 'Ready')}>
+        <span style={{ width: `${progress}%` }} />
+      </div>
+      <main className={ds ? '' : 'starting'}>
         <aside className="left">
-          <Tabs tabs={[['market', t('Market')], ['fits', `${t('Fits')} (${Object.keys(lib.fits).length})`], ['char', t('Character')], ['profiles', t('Profiles')], ['about', t('About')]]} value={left} onChange={setLeft} />
+          <Tabs tabs={[[ 'market', t('Market')], ['fits', `${t('Fits')} (${Object.keys(lib.fits).length})`], ['char', t('Character')], ['profiles', t('Profiles')]]} value={left} onChange={setLeft} />
           <div className="leftbody">
+          {!ds ? <div className="skeleton-list"><i /><i /><i /><i /><i /><i /><i /></div> : <>
           {left === 'market' && <Market ds={ds} engine={engineReady ? engineRef.current : null} onPick={pick} onInfo={setInfo} locate={locate} />}
           {left === 'fits' && <FitBrowser ds={ds} lib={lib} activeId={fit?.id ?? null} status={storeStatus}
             onOpen={(id) => update((s) => ({ ...s, settings: { ...s.settings, activeFitId: id } }))} onLib={setLib} onInfo={locateType} />}
           {left === 'char' && <CharacterEditor ds={ds} lib={lib} fit={fit} onLib={setLib} onFit={setFit} />}
           {left === 'profiles' && <Profiles lib={lib} fit={fit} onLib={setLib} onFit={setFit} />}
-          {left === 'about' && <About cfg={settings.engine} status={engineStatus} st={stats} ds={ds} build={build} graphBackend={graphBackend} />}
+          </>}
           </div>
-          {infoState != null && (
-            <div className="infobar">
-              <ItemInfo ds={ds} id={infoState.id} ctx={infoState.ctx} fitted={fitted} fittedNote={fittedNote} onClose={() => setInfo(null)} onShow={setInfo} onSwap={fit ? swapInfoType : undefined}
-                overrides={fit ? Object.fromEntries((fit.overrides ?? []).filter((o) => o.type_id === infoState.id).map((o) => [o.attribute_id, o.value])) : undefined}
-                onOverride={fit ? (a, v) => setFit({ ...fit, overrides: [...(fit.overrides ?? []).filter((o) => !(o.type_id === infoState.id && o.attribute_id === a)), ...(v == null ? [] : [{ type_id: infoState.id, attribute_id: a, value: v }])] }) : undefined} />
+          <section className={`infobar${settings.infoCollapsed ? ' collapsed' : ''}`} style={{ height: settings.infoCollapsed ? 26 : settings.infoHeight }}>
+            <div className="info-resize" onPointerDown={(e) => beginResize(e, 'info')} onDoubleClick={() => updateSettings({ infoCollapsed: !settings.infoCollapsed })} title={t('Drag to resize info pane')} />
+            <div className="info-pane-head">
+              <button className="mini" onClick={() => updateSettings({ infoCollapsed: !settings.infoCollapsed })}>{settings.infoCollapsed ? '▴' : '▾'}</button>
+              <span>{t('Item info')}</span>
             </div>
-          )}
+            {!settings.infoCollapsed && (infoState != null && ds ? (
+              <div className="info-pane-content">
+                <ItemInfo ds={ds} id={infoState.id} ctx={infoState.ctx} fitted={fitted} fittedNote={fittedNote} onClose={() => setInfo(null)} onShow={setInfo} onSwap={fit ? swapInfoType : undefined}
+                  overrides={fit ? Object.fromEntries((fit.overrides ?? []).filter((o) => o.type_id === infoState.id).map((o) => [o.attribute_id, o.value])) : undefined}
+                  onOverride={fit ? (a, v) => setFit({ ...fit, overrides: [...(fit.overrides ?? []).filter((o) => !(o.type_id === infoState.id && o.attribute_id === a)), ...(v == null ? [] : [{ type_id: infoState.id, attribute_id: a, value: v }])] }) : undefined} />
+              </div>
+            ) : <div className="info-empty muted">{t('Select an item to see details.')}</div>)}
+          </section>
         </aside>
         <section className="center">
-          <Tabs tabs={[['fit', t('Fit')], ['graphs', t('Graphs')], ['compare', t('Compare')], ['whatif', t('What-if')]]} value={center} onChange={setCenter} />
-          {center === 'compare' ? <Compare ds={ds} lib={lib} activeId={fit?.id ?? null} engine={engineReady ? engineRef.current : null} onOpen={(id) => { update((s) => ({ ...s, settings: { ...s.settings, activeFitId: id } })); setCenter('fit'); }} />
-          : !fit ? <p className="muted">{t('No fit selected.')}</p> : center === 'whatif' ? <WhatIf ds={ds} fit={fit} lib={lib} engine={engineReady ? engineRef.current : null} onApply={setFit} />
-          : center === 'fit'
-            ? <Fitting ds={ds} fit={fit} lib={lib} stats={stats} onChange={setFit} onInfo={locateType} addProjected={addProjected} setAddProjected={setAddProjected} />
-            : <Graphs ds={ds} st={stats} target={lib.targetProfiles[fit.target_profile_id]} engine={engineReady ? engineRef.current : null} request={request} engineReady={engineReady} lib={lib} fitId={fit.id} />}
+          <div className="fit-area">
+            {!ds ? <div className="skeleton-fit"><i /><i /><i /><i /><i /><i /><i /><i /></div>
+              : fit ? <Fitting ds={ds} fit={fit} lib={lib} stats={stats} onChange={setFit} onInfo={locateType} addProjected={addProjected} setAddProjected={setAddProjected} />
+                : <p className="muted">{t('No fit selected.')}</p>}
+          </div>
+          <div className="dock-resize" onPointerDown={(e) => beginResize(e, 'dock')} onDoubleClick={() => updateSettings({ dockCollapsed: !settings.dockCollapsed })} title={t('Drag to resize dock')} />
+          <section className={`dock${settings.dockCollapsed ? ' collapsed' : ''}`} style={{ height: settings.dockCollapsed ? 26 : `${settings.dockHeight}%` }}>
+            <div className="dock-head">
+              <Tabs tabs={[
+                ['strip', t('Compare strip')], ['graphs', t('Graphs')], ['compare', t('Fit compare')],
+                ['import-export', t('Import-export')], ['whatif', t('What-if')],
+              ]} value={dockTab} onChange={setDockTab} />
+              <button className="mini dock-collapse" onClick={() => updateSettings({ dockCollapsed: !settings.dockCollapsed })} title={settings.dockCollapsed ? t('Expand dock') : t('Collapse dock')}>{settings.dockCollapsed ? '▴' : '▾'}</button>
+            </div>
+            {!settings.dockCollapsed && <div className="dock-content">
+              {!ds ? <div className="skeleton-list"><i /><i /><i /><i /></div>
+                : dockTab === 'strip' ? <div className="dock-placeholder muted">{t('Compare strip placeholder')}</div>
+                  : dockTab === 'graphs' ? fit
+                    ? <Graphs st={stats} target={lib.targetProfiles[fit.target_profile_id]} engine={engineReady ? engineRef.current : null} request={request} engineReady={engineReady} lib={lib} fitId={fit.id} />
+                    : <p className="muted">{t('No fit selected.')}</p>
+                    : dockTab === 'compare' ? <Compare ds={ds} lib={lib} activeId={fit?.id ?? null} engine={engineReady ? engineRef.current : null} onOpen={(id) => { update((s) => ({ ...s, settings: { ...s.settings, activeFitId: id } })); setDockTab('strip'); }} />
+                      : dockTab === 'import-export' ? <ImportExport ds={ds} fit={fit} lib={lib} stats={stats}
+                        calc={engineReady && engineRef.current ? (r) => engineRef.current!.calc(r) : null}
+                        onImport={(f) => addFit(f)} />
+                        : fit ? <WhatIf ds={ds} fit={fit} lib={lib} engine={engineReady ? engineRef.current : null} onApply={setFit} />
+                          : <p className="muted">{t('No fit selected.')}</p>}
+            </div>}
+          </section>
         </section>
-        <aside className="right"><Stats st={stats} busy={busy} ms={ms} error={calcErr} ds={ds} fit={fit} /><PriceBox ds={ds} st={stats} backend={ecfg.backend} settings={priceSet} onSettings={setPriceSet} snapshot={snapState} /></aside>
+      <aside className="right">{!ds ? <div className="skeleton-list"><i /><i /><i /><i /><i /><i /></div>
+        : fit ? <>
+          <Stats st={stats} busy={busy} ms={ms} error={calcErr} ds={ds} fit={fit} onWriteBack={writeBackAdjustments} />
+          <PriceBox ds={ds} st={stats} settings={priceSet} onSettings={setPriceSet} snapshot={snapState} />
+        </> : <p className="muted">{t('No fit selected')}</p>}</aside>
       </main>
       <footer className="muted">
-        {t('Engine via a swappable adapter (in-browser WASM worker or HTTP). Data:')} <a href="https://github.com/EX-CT/EXFA-Data/releases">EX-CT/EXFA-Data</a> {t('release')}.
+        {t('EXFA Engine v0.2.0 · WASM-only. Data:')} <a href="https://github.com/EX-CT/EXFA-Data/releases">EX-CT/EXFA-Data</a> {t('release')}.
         {t('EVE Online data © CCP hf.')} · <a href="https://github.com/EX-CT/EXFA-App">{t('source')}</a>
         {build && <> · {t('build')} <a href={build.run}>{build.web}</a> ({build.built_at?.replace('T', ' ').replace(/:\d\dZ$/, ' UTC')}) · {t('dataset')} {build.dataset_tag} · {t('engine')} <a href={build.engine_release_url}>{build.engine_release ?? 'n/a'}</a></>}
       </footer>
-      {showIO && <ImportExport ds={ds} fit={fit} lib={lib} stats={stats} calc={engineReady && engineRef.current ? (r) => engineRef.current!.calc(r) : null} onImport={(f) => { addFit(f); setShowIO(false); }} onClose={() => setShowIO(false)} />}
+      <ToastViewport />
     </div>
   );
 }

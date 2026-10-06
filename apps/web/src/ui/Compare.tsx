@@ -60,7 +60,7 @@ export function Compare({ ds, lib, activeId, engine, onOpen }: { ds: Dataset; li
         <table className="grid small cmp-table">
           <thead><tr><th>{t('Metric')}</th>{ids.map((id, i) => (
             <th key={id} className="num"><a href="#" title={t('open this fit')} onClick={(e) => { e.preventDefault(); onOpen(id); }}>{lib.fits[id].name}</a>
-              {i > 0 && <button className="tiny" title={t('make this the baseline')} onClick={() => move(id)}>⇤</button>}
+              {i > 0 && <button className="tiny" title={t('make this the baseline')} onClick={() => move(id)}>{t('Base')}</button>}
               {cur.errors[i] && <div className="error small">{cur.errors[i]}</div>}</th>
           ))}</tr></thead>
           <tbody>{rows.map((r) => (

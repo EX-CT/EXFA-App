@@ -16,6 +16,8 @@ import { implantSets } from "../profiles.js";
 import { DATASET } from "./helpers.js";
 import { withPricesFlag, engineErrorFrom } from "../adapters/types.js";
 import { resolvePriceFile } from "../price-file.js";
+import { pickAxes, type GraphSpec } from "../graphs.js";
+import { describeViolations } from "../summary.js";
 
 const noEngine = { kind: "none" } as unknown as EngineAdapter;
 
@@ -191,6 +193,42 @@ describe("dataset index", { skip: !existsSync(DATASET) && "dataset missing" }, (
     assert.equal(a.projected[1].fighter.quantity, 4);
     assert.equal(a.projected[2].fighter.quantity, 3);
   });
+
+  test("mcp.unit.violation-hints: drone, fighter and cargo violations have fix hints", () => {
+    const violations = ["DRONE_BAY", "FIGHTER_TUBES", "FIGHTER_BAY", "CARGO_OVERLOAD"].map((code) => ({ code, module_index: null }));
+    const described = describeViolations(ds, { modules: [] } as any, { violations } as any);
+    assert.deepEqual((described as { hint?: string }[]).map((v) => typeof v.hint), ["string", "string", "string", "string"]);
+  });
+});
+
+test("mcp.unit.graph-axis-preferences: default axes are distance, time and target signature when supported", () => {
+  const damageAxes = ["atk_angle_deg", "atk_speed_mps", "atk_speed_pct", "distance_m", "tgt_angle_deg", "tgt_sig_m", "tgt_sig_pct", "tgt_speed_mps", "tgt_speed_pct", "time_s"];
+  const damage: GraphSpec = {
+    axes: Object.fromEntries(damageAxes.map((axis) => [axis, {}])),
+    series: { dps: { by_axis: Object.fromEntries(damageAxes.map((axis) => [axis, "dps"])) } },
+  };
+  const capacitorAxes = ["cap_pct", "time_s"];
+  const capacitor: GraphSpec = {
+    axes: Object.fromEntries(capacitorAxes.map((axis) => [axis, {}])),
+    series: { cap_gj: { by_axis: Object.fromEntries(capacitorAxes.map((axis) => [axis, "cap_gj"])) } },
+  };
+  const lockTime: GraphSpec = {
+    axes: { tgt_sig_m: {} },
+    series: { time_s: { by_axis: { tgt_sig_m: "lock time" } } },
+  };
+
+  assert.equal(pickAxes(damage, "damage").axis, "distance_m");
+  assert.equal(pickAxes(capacitor, "capacitor").axis, "time_s");
+  assert.equal(pickAxes(lockTime, "lock_time").axis, "tgt_sig_m");
+
+  const sharedAxes: GraphSpec = {
+    axes: { atk_angle_deg: {}, distance_m: {}, time_s: {} },
+    series: {
+      dps: { by_axis: { atk_angle_deg: "dps", distance_m: "dps", time_s: "dps" } },
+      volley: { by_axis: { time_s: "volley" } },
+    },
+  };
+  assert.equal(pickAxes(sharedAxes, "damage", undefined, ["dps", "volley"]).axis, "time_s");
 });
 
 test("mcp.unit.metrics-goal-score: metrics and goal score", () => {

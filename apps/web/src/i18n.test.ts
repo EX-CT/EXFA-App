@@ -4,7 +4,6 @@ import { join } from 'node:path';
 import { ZH } from './i18n-zh';
 import { setUiLang, t } from './i18n';
 import { METRICS } from './fit/metrics';
-import { BACKENDS } from './engine/adapter';
 
 const SRC = new URL('.', import.meta.url).pathname;
 const files = (dir: string): string[] => readdirSync(dir).flatMap((f) => {
@@ -16,7 +15,7 @@ const unq = (q: string) => q.slice(1, -1).replace(/\\(.)/g, '$1');
 
 /** Keys used dynamically (t(variable)): label tables, enum values and templated keys. */
 function dynamicKeys(): string[] {
-  const keys = [...METRICS.map((m) => m.label), ...BACKENDS.map((b) => b.label)];
+  const keys = METRICS.map((m) => m.label);
   for (const { p, s } of sources) {
     // ['id', 'Label'] tuples in the UI label tables (graph kinds, slots, exports, market filters)
     if (/ui\/(Graphs|Fitting|ImportExport|Market)\.tsx$/.test(p)) for (const m of s.matchAll(/\[\s*'[a-z_]+'\s*,\s*'([^']+)'\s*[\],]/g)) { if (/[A-Z ]/.test(m[1])) keys.push(m[1]); }

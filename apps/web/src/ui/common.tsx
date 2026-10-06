@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { t } from '../i18n';
 
 /** Item icon from CCP's image CDN (images.evetech.net, no auth). Ships/structures get the
@@ -58,6 +58,45 @@ export function Tabs<T extends string>({ tabs, value, onChange }: { tabs: [T, st
   );
 }
 
+export function InlineEdit({ value, onCommit, placeholder, className = '' }: {
+  value: string; onCommit: (value: string) => void; placeholder?: string; className?: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+  const original = useRef(value);
+  const finished = useRef(false);
+  const finish = (commit: boolean) => {
+    if (finished.current) return;
+    finished.current = true;
+    setEditing(false);
+    if (commit && draft.trim() !== original.current) onCommit(draft.trim());
+  };
+  useEffect(() => {
+    if (!editing) { setDraft(value); original.current = value; }
+  }, [editing, value]);
+  return editing
+    ? <input className={`inline-edit-input ${className}`} autoFocus value={draft} placeholder={placeholder}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); finish(true); e.currentTarget.blur(); } if (e.key === 'Escape') { e.preventDefault(); finish(false); e.currentTarget.blur(); } }}
+        onBlur={() => finish(true)} />
+    : <button type="button" className={`inline-edit ${className}`} aria-label={placeholder ?? value} onClick={() => { finished.current = false; setEditing(true); }}>{value || placeholder}</button>;
+}
+
+export function Popover({ open, onClose, children, className = '' }: {
+  open: boolean; onClose: () => void; children: ReactNode; className?: string;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const outside = (e: PointerEvent) => { if (!ref.current?.contains(e.target as Node)) onClose(); };
+    const escape = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('pointerdown', outside);
+    document.addEventListener('keydown', escape);
+    return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape); };
+  }, [open, onClose]);
+  return open ? <div ref={ref} className={`popover ${className}`} role="dialog">{children}</div> : null;
+}
+
 export function Bar({ used, total, label }: { used: number; total: number; label: string }) {
   const p = total > 0 ? Math.min(used / total, 1.5) : used > 0 ? 1.5 : 0;
   return (
@@ -70,7 +109,7 @@ export function Bar({ used, total, label }: { used: number; total: number; label
 }
 
 export interface ChartSeries { name: string; points: [number, number][]; dash?: string; color?: number }
-const COLORS = ['#4fc3f7', '#ffb74d', '#81c784', '#e57373', '#ba68c8', '#fff176'];
+const COLORS = ['#d9a640', '#f2c96b', '#5fbf77', '#e5484d', '#7aa7d9', '#f0883e'];
 
 export function LineChart({ series, xLabel, yLabel, height = 260 }: { series: ChartSeries[]; xLabel: string; yLabel: string; height?: number }) {
   const W = 640, H = height, L = 56, B = 34, R = 12, T = 10;

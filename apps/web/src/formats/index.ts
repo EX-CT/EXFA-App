@@ -1,43 +1,32 @@
-// Entry point of the formats layer for the UI: every import (share links ?eft= / ?dna=, the import dialog, files)
-// is text -> FitFormats.parse -> StructuredFit -> UI Fit, and every export is UI Fit -> FitRequest -> FitFormats.export
-// -> text. The engines only ever receive structured FitRequests. The active implementation is the exfa-formats
-// WASM module (EX-CT/EXFA-Engine, built from the engines.lock pin of engine F); the built-in TypeScript parsers are the
-// fallback when that module is not available (and are what the unit tests exercise without a Rust build).
+// Format RPCs run through the same worker as calc and graph requests.
 import type { Dataset, Slot } from '../data/dataset';
 import { newFit, toRequest, uid, type Character, type DamagePattern, type Fit, type Library, type Projected, type TargetProfile } from '../fit/model';
-import { builtinFormats } from './builtin';
-import { loadFormatsRpc, wasmFormats, type RpcFn } from './wasm';
-import type { ExportFormat, ExportOptions, FitFormats, ImportFormat, StructuredFit, StructuredLibrary } from './types';
+import { requestToStructured } from './convert';
+import type { ExportFormat, ExportOptions, ImportFormat, StructuredFit, StructuredLibrary } from './types';
 import { shipstatsRequest } from './types';
 
-export type { ExportFormat, FitFormats, ImportFormat, StructuredFit, StructuredLibrary } from './types';
+export type { ExportFormat, ImportFormat, StructuredFit, StructuredLibrary } from './types';
 export { shipstatsRequest } from './types';
 
-let rpc: RpcFn | null = null;
-let status: { provider: string; label: string; note?: string } = { provider: 'builtin-ts', label: 'built-in TypeScript parsers' };
-const cache = new WeakMap<Dataset, FitFormats>();
+type RpcResponse = { result?: any; error?: { code: string; message?: string } };
+export type EngineRpc = (method: string, params: unknown) => Promise<RpcResponse>;
+let engineRpc: EngineRpc | null = null;
 
-/** Load the exfa-formats module (once). On failure the built-in parsers stay active and `formatsStatus().note` says why. */
-export async function initFormats(url: string | ArrayBuffer | Uint8Array | null): Promise<typeof status> {
-  if (!url) { status = { provider: 'builtin-ts', label: 'built-in TypeScript parsers', note: 'no exfa-formats module configured' }; return status; }
-  try {
-    rpc = await loadFormatsRpc(url);
-    status = { provider: 'exfa-formats', label: 'exfa-formats (WASM)' };
-  } catch (e) {
-    rpc = null;
-    status = { provider: 'builtin-ts', label: 'built-in TypeScript parsers', note: `exfa-formats unavailable: ${(e as Error).message}` };
-  }
-  return status;
-}
-export const formatsStatus = () => status;
-/** Raw JSONL RPC of the formats module (eft_parse / eft_export / format_import / format_export), or null. */
-export const formatsRpc = () => rpc;
+export const setEngineFormatsRpc = (rpc: EngineRpc) => { engineRpc = rpc; };
 
-export function formats(ds: Dataset): FitFormats {
-  let f = cache.get(ds);
-  if (!f || f.id !== status.provider) cache.set(ds, (f = rpc ? wasmFormats(ds, rpc) : builtinFormats(ds)));
-  return f;
-}
+const rpc = async (method: string, params: unknown) => {
+  if (!engineRpc) throw new Error('engine not ready');
+  const response = await engineRpc(method, params);
+  const error = response?.error ?? response?.result?.error;
+  if (error) throw new Error(`${error.code}: ${error.message ?? ''}`.trim());
+  return response?.result ?? null;
+};
+
+const splitEft = (text: string) => {
+  const lines = text.replace(/\r/g, '').split('\n');
+  const heads = lines.map((line, i) => (/^\[[^\],]+,[^\]]*\]\s*$/.test(line.trim()) ? i : -1)).filter((i) => i >= 0);
+  return heads.length > 1 ? heads.map((h, i) => lines.slice(h, heads[i + 1] ?? lines.length).join('\n')) : [text];
+};
 
 /** StructuredFit -> UI fit with library defaults (character, profiles, options). Drones of an imported fit start
  *  launched (as with the engine's eft_parse and the web's earlier importers) when the format left them all in the bay. */
@@ -56,13 +45,26 @@ export function fitFromStructured(sf: StructuredFit, opts: { launchDrones?: bool
 }
 
 export interface ImportResult { kind: string; fits: Fit[]; warnings: string[] }
-export function importFits(ds: Dataset, text: string, format?: ImportFormat, path?: string): ImportResult {
-  const r = formats(ds).parse(text, format, path);
-  return { kind: r.kind, fits: r.fits.map((f) => fitFromStructured(f)), warnings: r.warnings };
+export async function importFits(ds: Dataset, text: string, format?: ImportFormat, path?: string): Promise<ImportResult> {
+  const chunks = format === 'auto' || format === 'eft' ? splitEft(text) : [text];
+  const warnings: string[] = [];
+  const fits: Fit[] = [];
+  let kind = '';
+  for (const chunk of chunks) {
+    const result = await rpc('format_import', { text: chunk, format: chunks.length > 1 ? 'eft' : format ?? 'auto', ...(path ? { path } : {}) });
+    if (!result?.fits) throw new Error(`${result?.kind ?? 'input'}: an item list, not a fit (${(result?.items ?? []).length} items)`);
+    kind = result.kind ?? kind;
+    for (const request of result.fits) {
+      const structured = requestToStructured(ds, request, request.name, request.notes, warnings);
+      fits.push(fitFromStructured(structured));
+    }
+    warnings.push(...(result.warnings ?? []));
+  }
+  return { kind, fits, warnings };
 }
 /** One fit from text (share links, the demo fit): the first fit of the text. */
-export function importFit(ds: Dataset, text: string, format?: ImportFormat): Fit {
-  const r = importFits(ds, text, format);
+export async function importFit(ds: Dataset, text: string, format?: ImportFormat): Promise<Fit> {
+  const r = await importFits(ds, text, format);
   if (!r.fits.length) throw new Error('no fit in the text');
   return r.fits[0];
 }
@@ -70,16 +72,20 @@ export function importFit(ds: Dataset, text: string, format?: ImportFormat): Fit
 export interface ExportExtra { options?: ExportOptions; stats?: unknown; slotTotals?: Partial<Record<Slot, number>> }
 /** The FitRequest an export sees (and, through shipstatsRequest, the request whose stats `shipstats` needs). */
 export function exportRequest(fit: Fit, lib: Library) { return toRequest(fit, lib); }
-export function exportFit(ds: Dataset, fit: Fit, lib: Library, format: ExportFormat, extra: ExportExtra = {}): string {
-  const f = formats(ds);
-  const opts = f.id === 'builtin-ts' ? { ...(extra.options ?? {}), slotTotals: extra.slotTotals } as unknown as ExportOptions : extra.options;
-  return f.export({ name: fit.name, notes: fit.notes, fit: exportRequest(fit, lib), stats: extra.stats }, format, opts);
+export async function exportFit(_ds: Dataset, fit: Fit, lib: Library, format: ExportFormat, extra: ExportExtra = {}): Promise<string> {
+  const result = await rpc('format_export', {
+    fit: exportRequest(fit, lib), name: fit.name, format,
+    ...(extra.options ? { options: extra.options } : {}),
+    ...(extra.stats ? { stats_json: JSON.stringify(extra.stats) } : {}),
+  });
+  if (typeof result?.text !== 'string') throw new Error('format export returned no text');
+  return result.text;
 }
-/** shipstats export: engine stats of shipstatsRequest(fit) first, then the formats module renders the text. */
+/** shipstats export: calculate shipstatsRequest(fit), then let the Engine formats RPC render the text. */
 export async function exportShipstats(ds: Dataset, fit: Fit, lib: Library, calc: (req: unknown) => Promise<unknown>): Promise<string> {
   const stats = await calc(shipstatsRequest(exportRequest(fit, lib)));
   if ((stats as { error?: { message?: string } })?.error) throw new Error(`engine: ${(stats as { error: { message?: string } }).error.message}`);
-  return exportFit(ds, fit, lib, 'shipstats', { stats });
+  return await exportFit(ds, fit, lib, 'shipstats', { stats });
 }
 
 export interface LibraryImport {
@@ -144,14 +150,14 @@ export function libraryFromStructured(sl: StructuredLibrary, lib: Library, meta:
 }
 
 /** Several fits in one text: EFT blocks separated by blank lines (Pyfa's multi-fit export), or one EVE XML document
- *  with every fit (the shape of Pyfa's "Backup all fittings"), built from the formats module's per-fit exports. */
-export function exportFits(ds: Dataset, fits: Fit[], lib: Library, format: 'eft' | 'xml' | 'dna'): string {
-  if (format !== 'xml') return fits.map((f) => exportFit(ds, f, lib, format).trimEnd()).join(format === 'eft' ? '\n\n\n' : '\n') + '\n';
-  const blocks = fits.map((f) => {
-    const x = exportFit(ds, f, lib, 'xml');
+ *  with every fit (the shape of Pyfa's "Backup all fittings"), built from the Engine formats RPC's per-fit exports. */
+export async function exportFits(ds: Dataset, fits: Fit[], lib: Library, format: 'eft' | 'xml' | 'dna'): Promise<string> {
+  if (format !== 'xml') return (await Promise.all(fits.map(async (f) => (await exportFit(ds, f, lib, format)).trimEnd()))).join(format === 'eft' ? '\n\n\n' : '\n') + '\n';
+  const blocks = await Promise.all(fits.map(async (f) => {
+    const x = await exportFit(ds, f, lib, 'xml');
     const a = x.indexOf('<fitting '), b = x.lastIndexOf('</fitting>');
     if (a < 0 || b < 0) throw new Error(`XML export of "${f.name}" has no <fitting>`);
     return '\t' + x.slice(a, b + '</fitting>'.length);
-  });
+  }));
   return `<?xml version="1.0" ?>\n<fittings count="${fits.length}">\n${blocks.join('\n')}\n</fittings>\n`;
 }

@@ -18,15 +18,30 @@ export function weaponName(w: any, ds?: Dataset | null, fit?: Fit | null): strin
   return ch && ds.raw.types?.[ch] ? `${base} · ${ds.name(ch)}` : base;
 }
 
-export function Stats({ st, busy, ms, error, ds, fit }: { st: FitStats | null; busy: boolean; ms: number | null; error: string | null; ds?: Dataset | null; fit?: Fit | null }) {
+export function Stats({ st, busy, ms, error, ds, fit, onWriteBack }: {
+  st: FitStats | null; busy: boolean; ms: number | null; error: string | null; ds?: Dataset | null; fit?: Fit | null; onWriteBack?: () => void;
+}) {
   if (error) return <div className="stats"><div className="error">{tr('Engine error')}: {error}</div></div>;
   if (!st) return <div className="stats muted">{busy ? tr('calculating…') : tr('no stats yet')}</div>;
   if (st.error) return <div className="stats"><div className="error">{st.error.code}: {st.error.message} {st.error.path}</div></div>;
   const r = st.resources ?? {}, o = st.offense ?? {}, d = st.defense ?? {}, c = st.capacitor ?? {}, n = st.navigation ?? {}, t = st.targeting ?? {};
   const res = (x: any, l: string) => (x && (x.total || x.used) ? <Bar label={l} used={x.used ?? 0} total={x.total ?? 0} /> : null);
+  const adjustments = (st.adjustments ?? []) as { code: string; path: string; from: unknown; to: unknown; message?: string }[];
+  const adjustmentValue = (v: unknown) => typeof v === 'string' ? v : JSON.stringify(v);
   return (
     <div className="stats">
       <div className="statmeta muted">{st.meta?.engine} · SDE {st.meta?.sde_build}{ms != null ? ` · ${ms.toFixed(1)} ms` : ''}{busy ? ' · …' : ''}</div>
+      {adjustments.length > 0 && <div className="adjustments">
+        <div className="adjustments-head">
+          <span>{tr('Adjusted automatically')} {adjustments.length} {tr('items')}</span>
+          {onWriteBack && <button className="mini" onClick={onWriteBack}>{tr('Write back to fit')}</button>}
+        </div>
+        <ul>{adjustments.map((a, i) => (
+          <li key={`${a.code}-${a.path}-${i}`} title={`${tr(ADJUSTMENT_LABEL[a.code] ?? a.code)} · ${a.path} · ${tr('From')}: ${adjustmentValue(a.from)} → ${tr('To')}: ${adjustmentValue(a.to)}${a.message ? ` · ${a.message}` : ''}`}>
+            {tr(ADJUSTMENT_LABEL[a.code] ?? a.code)} · {a.path}
+          </li>
+        ))}</ul>
+      </div>}
       {(st.violations?.length ?? 0) > 0 && (
         <Section title={`${tr('Problems')} (${st.violations.length})`}>
           <ul className="viol">{st.violations.map((v: any, i: number) => <li key={i} data-code={v.code} title={v.code}><b>{VIOLATION_LABEL[v.code] ? tr(VIOLATION_LABEL[v.code]) : v.code}</b> {v.message}</li>)}</ul>
@@ -52,17 +67,18 @@ export function Stats({ st, busy, ms, error, ds, fit }: { st: FitStats | null; b
         </tbody></table>
         <div className="kv">{DT.map((k) => <span key={k} className={'dt-' + k}>{DT_SHORT[k]} {fmt(o.total?.dps?.[k])}</span>)}</div>
         {(o.weapons ?? []).length > 0 && (
-          <table className="grid small"><thead><tr><th>{tr('Weapon')}</th><th>{tr('dps')}</th><th>{tr('Range')}</th><th>{tr('Cycle s')}</th></tr></thead><tbody>
-            {o.weapons.map((w: any, i: number) => (
-              <tr key={i}><td className="wname">{weaponName(w, ds, fit)}</td><td className="num">{fmt(w.dps?.total)}</td>
+          <table className="grid small weapon-stats"><thead><tr><th>{tr('Weapon')}</th><th>{tr('dps')}</th><th>{tr('Range')}</th><th>{tr('Cycle s')}</th></tr></thead><tbody>
+            {o.weapons.map((w: any, i: number) => {
+              const name = weaponName(w, ds, fit);
+              return <tr key={i}><td className="wname" title={name}>{name}</td><td className="num">{fmt(w.dps?.total)}</td>
                 <td className="num">{w.kind === 'missile' ? `${fmt((w.range_m ?? 0) / 1000)} km` : w.optimal_m != null ? `${fmt(w.optimal_m / 1000)}+${fmt((w.falloff_m ?? 0) / 1000)} km` : '—'}</td>
-                <td className="num">{fmt((w.cycle_time_ms ?? 0) / 1000, 2)}</td></tr>
-            ))}
+                <td className="num">{fmt((w.cycle_time_ms ?? 0) / 1000, 2)}</td></tr>;
+            })}
           </tbody></table>
         )}
       </Section>
       <Section title={tr('Defense')} right={<b>{fmt(d.ehp?.total, 0)} EHP</b>}>
-        <table className="grid"><thead><tr><th></th><th>HP</th><th>EHP</th>{DT.map((k) => <th key={k} className={'dt-' + k}>{DT_SHORT[k]}</th>)}</tr></thead><tbody>
+        <table className="grid defense"><thead><tr><th></th><th>HP</th><th>EHP</th>{DT.map((k) => <th key={k} className={'dt-' + k}>{DT_SHORT[k]}</th>)}</tr></thead><tbody>
           {(['shield', 'armor', 'hull'] as const).map((l) => (
             <tr key={l}><td>{tr(l)}</td><td className="num">{fmt(d.hp?.[l], 0)}</td><td className="num">{fmt(d.ehp?.[l], 0)}</td>
               {DT.map((k) => <td key={k} className="num">{d.resonance?.[l]?.[k] != null ? pctFmt(1 - d.resonance[l][k]) : '—'}</td>)}</tr>
@@ -112,10 +128,17 @@ export const VIOLATION_LABEL: Record<string, string> = {
   CHARGE_GROUP: 'Charge does not fit this module', CHARGE_SIZE: 'Wrong charge size', CHARGE_CAPACITY: 'Charge too large for the module', MISSING_SKILL: 'Missing skill',
   DRONE_BAY: 'Drone bay exceeded', FIGHTER_BAY: 'Fighter bay exceeded', CARGO_OVERLOAD: 'Cargo exceeded', FIGHTER_TUBES: 'Fighter tubes exceeded',
 };
+const ADJUSTMENT_LABEL: Record<string, string> = {
+  STATE_CLAMPED: 'Module state adjusted to online',
+  FIGHTER_QUANTITY_CLAMPED: 'Fighter quantity reduced',
+  SLOT_OCCUPIED_SKIPPED: 'Occupied slot item removed',
+  SECURITY_DEFAULTED: 'Unknown security set to nullsec',
+  MODE_DEFAULTED: 'Default tactical mode applied',
+};
 
 const nz = (o: Record<string, number> | undefined) => !!o && Object.values(o).some((v) => typeof v === 'number' && v > 0);
 
-/** Mining yield (F stats-ext 1.10 `mining`): m³/s of modules and drones, and with residue/waste (drain). */
+/** Mining yield (Engine stats-ext 1.10 `mining`): m³/s of modules and drones, and with residue/waste (drain). */
 function Mining({ m }: { m: any }) {
   if (!nz(m)) return null;
   return (
@@ -131,7 +154,7 @@ function Mining({ m }: { m: any }) {
 }
 
 const OUT_KEYS = [['shield_per_s', 'Shield', 'HP/s'], ['armor_per_s', 'Armor', 'HP/s'], ['hull_per_s', 'Hull', 'HP/s'], ['capacitor_per_s', 'Capacitor', 'GJ/s']] as const;
-/** Outgoing remote repairs and capacitor transfer (F stats-ext 1.10 `outgoing`), with the spool range of mutadaptive repairers. */
+/** Outgoing remote repairs and capacitor transfer (Engine stats-ext 1.10 `outgoing`), with the spool range of mutadaptive repairers. */
 function Outgoing({ o }: { o: any }) {
   if (!o || !(nz(o.current) || nz(o.spool_max))) return null;
   const spools = OUT_KEYS.some(([k]) => (o.spool_min?.[k] ?? 0) !== (o.spool_max?.[k] ?? 0));
@@ -147,7 +170,7 @@ function Outgoing({ o }: { o: any }) {
   );
 }
 
-/** Bombs needed to kill this ship (F stats-ext 1.10 `bombing`, Pyfa's bombing view): per bomb damage type and Covert Ops level. */
+/** Bombs needed to kill this ship (Engine stats-ext 1.10 `bombing`, Pyfa's bombing view): per bomb damage type and Covert Ops level. */
 function Bombing({ b }: { b: any }) {
   if (!b || !b.em) return null;
   return (

@@ -1,5 +1,5 @@
-// End-to-end check of the main UI flows against a running site (any engine backend):
-//   node tools/e2e.mjs <url> [engine-id]      (url may carry a query, e.g. ...?http=http://127.0.0.1:8787 for engine http)
+// End-to-end check of the main UI flows against the WASM-only site:
+//   node tools/e2e.mjs <url> [wasm-worker]
 import puppeteer from 'puppeteer-core';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -7,6 +7,7 @@ import path from 'node:path';
 
 const url = process.argv[2] ?? 'http://127.0.0.1:4173/EXFA-App/';
 const engine = process.argv[3] ?? 'wasm-worker';
+if (engine !== 'wasm-worker') throw new Error(`EXFA-App is WASM-only; unsupported engine ${engine}`);
 const EFT = `[Vexor, E2E Vexor]
 Drone Damage Amplifier II
 Drone Damage Amplifier II
@@ -51,21 +52,24 @@ await p.setViewport({ width: 1500, height: 1000 });
 const errors = [];
 p.on('pageerror', (e) => errors.push(e.message));
 const results = [];
-// confirm() / prompt() answers for the fit library (next prompt value, else accept)
-let promptAnswer = null;
-p.on('dialog', (d) => { const v = promptAnswer; promptAnswer = null; d.accept(v ?? undefined); });
 // Check names: stable id `web.e2e.<slug>` + description (docs/test-ids.md maps ids to the old names).
 const check = (name, ok, detail = '') => { results.push({ name, ok: !!ok, detail }); };
 const stats = () => p.evaluate(() => window.__lastStats);
 const waitNew = async (prev) => { await p.waitForFunction((pr) => window.__lastStats && JSON.stringify(window.__lastStats) !== pr, { timeout: 60000 }, JSON.stringify(prev)); return stats(); };
 const clickText = (sel, text) => p.evaluate((s, t) => { const el = [...document.querySelectorAll(s)].find((e) => e.textContent.trim().startsWith(t)); if (!el) return false; el.click(); return true; }, sel, text);
+const setText = (text) => p.evaluate((t) => {
+  const ta = document.querySelector('textarea.eft');
+  const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+  set.call(ta, t);
+  ta.dispatchEvent(new Event('input', { bubbles: true }));
+}, text);
 
-const sep = url.includes("?") ? "&" : "?";
-await p.goto(`${url}${sep}engine=${engine}&eft=${encodeURIComponent(EFT)}`, { waitUntil: 'networkidle0', timeout: 120000 });
+const withQuery = (query) => `${url}${url.includes('?') ? '&' : '?'}${query}`;
+await p.goto(withQuery(`eft=${encodeURIComponent(EFT)}`), { waitUntil: 'networkidle0', timeout: 120000 });
 await p.waitForFunction(() => window.__lastStats?.offense, { timeout: 120000 });
-// The page must run the backend under test (a malformed URL used to fall back to the default backend silently).
+// The page must run the pinned WASM worker.
 const active = await p.evaluate(() => window.__eveEngine?.info?.id);
-if (active !== engine) { console.log(`FAIL  active backend  — wanted ${engine}, page runs ${active}`); await b.close(); process.exit(1); }
+if (active !== engine) { console.log(`FAIL  active engine  — wanted ${engine}, page runs ${active}`); await b.close(); process.exit(1); }
 let s = await stats();
 check('web.e2e.eft-share-link-import: EFT import via ?eft=, ship', s.ship?.name === 'Vexor', s.ship?.name);
 check('web.e2e.drone-dps: drones dps', s.offense?.total?.drone_dps > 0, s.offense?.total?.drone_dps);
@@ -103,39 +107,30 @@ check('web.e2e.environment-beacon: environment beacon applied', s.meta && (await
 
 // graphs
 await clickText('.center .tabs button', 'Graphs');
-// Backends with the graph RPC (CONTRACT-GRAPHS 0.2) must render engine-computed series; the others the UI approximation.
-// E2E_GRAPH_RPC=1/0 forces it; otherwise wasm-worker (F) has it, and an http engine has it if it answers graph_specs.
-const GRAPH_RPC = process.env.E2E_GRAPH_RPC ? process.env.E2E_GRAPH_RPC === '1'
-  : engine === 'wasm-worker' || (engine === 'http' && (await p.evaluate(async () => !!(await window.__eveEngine?.graphSpecs?.()))));
-const kinds = ['dps', 'cap', 'regen', 'mobility', 'lock', 'warp', ...(GRAPH_RPC ? ['app', 'ewar', 'rr'] : [])];
-if (GRAPH_RPC) await p.waitForFunction(() => document.querySelector('.graphs select option[value="app"]'), { timeout: 30000 }).catch(() => {});
+// The WASM-only app must offer and render Engine graph RPC results for every graph kind.
+const GRAPH_RPC = true;
+const kinds = ['dps', 'cap', 'regen', 'mobility', 'lock', 'warp', 'app', 'ewar', 'rr'];
+await p.waitForFunction(() => document.querySelector('.graphs select option[value="app"]'), { timeout: 30000 });
 const offered = await p.evaluate(() => [...document.querySelectorAll('.graphs select option')].map((o) => o.value));
-check(GRAPH_RPC ? 'web.e2e.graph-set: graphs: engine-only graphs offered' : 'web.e2e.graph-set: graphs: approximation set only', GRAPH_RPC ? ['app', 'ewar', 'rr'].every((x) => offered.includes(x)) : !offered.includes('app'), offered.join(','));
+check('web.e2e.graph-set: Engine graphs are offered', ['app', 'ewar', 'rr'].every((x) => offered.includes(x)), offered.join(','));
 for (const g of kinds) {
   await p.select('.graphs select', g);
-  const want = GRAPH_RPC ? 'engine' : 'approx';
+  const want = 'engine';
   const src = await p.waitForFunction((w) => { const e = document.querySelector('.graph-src'); return e && e.dataset.src === w && e.dataset.src; }, { timeout: 30000 }, want).then((h) => h.jsonValue(), () => p.evaluate(() => document.querySelector('.graph-src')?.dataset.src + ' ' + (document.querySelector('.graph-src')?.title ?? '')));
   const n = await p.evaluate(() => document.querySelectorAll('svg.chart polyline').length);
   const lg = await p.evaluate(() => window.__lastGraph);
-  if (GRAPH_RPC && g === 'dps') {
-    // which backend computed the graph: the engine itself, or its GRAPH_FALLBACK
-    const by = await p.evaluate(() => document.querySelector('.graph-src')?.dataset.graphBackend);
-    const wantBy = engine;
-    check('web.e2e.graph-backend-label: graph backend label', by === wantBy, `${by} (fit stats: ${engine})`);
-  }
-  check(`web.e2e.graph-${g}: graph ${g} (${want})`, n > 0 && src === want && (!GRAPH_RPC || lg?.kind === g), `${n} lines, ${src}${lg?.series ? ', ' + lg.series.map((x) => `${x.name}:${x.n}`).join(' ') : ''}`);
-  if (GRAPH_RPC && g === 'lock') {
+  check(`web.e2e.graph-${g}: graph ${g} (${want})`, n > 0 && src === want && lg?.kind === g, `${n} lines, ${src}${lg?.series ? ', ' + lg.series.map((x) => `${x.name}:${x.n}`).join(' ') : ''}`);
+  if (g === 'lock') {
     // lock time = min(40000 / scanRes / asinh(sig)^2, 1800) at sig 10 m, from the stats of the same engine
     const sr = s.targeting?.scan_resolution, want10 = Math.min(40000 / sr / Math.asinh(10) ** 2, 1800), got = lg?.series?.[0]?.first;
     check('web.e2e.graph-lock-time-matches-stats: engine lock-time graph matches stats', got && Math.abs(got[1] - want10) <= 1e-6 * want10, `${got?.[1]} vs ${want10}`);
   }
-  if (GRAPH_RPC && g === 'ewar') check('web.e2e.graph-ewar-web-neut: engine ewar graph has web + neut', ['web_pct', 'neut_gj_s'].every((y) => lg?.series?.some((x) => x.name === y)), lg?.series?.map((x) => x.name).join(','));
-  if (GRAPH_RPC && g === 'cap') check('web.e2e.graph-cap-within-capacity: engine capacitor graph within capacity', lg?.series?.[0]?.first?.[1] > 0 && lg.series[0].first[1] <= s.capacitor?.capacity * (1 + 1e-9), `t=0 ${lg?.series?.[0]?.first?.[1]} (after first activations, capsim) of ${s.capacitor?.capacity} GJ`);
+  if (g === 'ewar') check('web.e2e.graph-ewar-web-neut: engine ewar graph has web + neut', ['web_pct', 'neut_gj_s'].every((y) => lg?.series?.some((x) => x.name === y)), lg?.series?.map((x) => x.name).join(','));
+  if (g === 'cap') check('web.e2e.graph-cap-within-capacity: engine capacitor graph within capacity', lg?.series?.[0]?.first?.[1] > 0 && lg.series[0].first[1] <= s.capacitor?.capacity * (1 + 1e-9), `t=0 ${lg?.series?.[0]?.first?.[1]} (after first activations, capsim) of ${s.capacitor?.capacity} GJ`);
 }
 
 // booster side effect toggle (armor HP penalty)
-await clickText('.center .tabs button', 'Fit');
-await clickText('.tabs button', 'Fitting');
+await clickText('.fit-area .tabs button', 'Fitting');
 const a0 = s.defense?.hp?.armor;
 const toggled = await p.evaluate(() => { const l = [...document.querySelectorAll('.subopts label')].find((x) => x.textContent.includes('Armor Hp')); if (!l) return false; l.querySelector('input').click(); return true; });
 s = await waitNew(s);
@@ -196,39 +191,47 @@ await p.select('select.buffsel', buffId);
 s = await waitNew(s);
 check('web.e2e.manual-fleet-buff: manual fleet buff raises shield resist (lower resonance)', s.defense?.resonance?.shield?.em < sr0, `${sr0} -> ${s.defense?.resonance?.shield?.em}`);
 
-// export EFT round trip
-await clickText('header button', 'Import / export');
-await clickText('.dialog button', 'Export EFT');
+// export EFT round trip through the Engine formats RPC in the dock
+await clickText('.center .tabs button', 'Import-export');
+await clickText('.import-export button', 'Export EFT');
+await p.waitForFunction(() => document.querySelector('textarea.eft')?.value.startsWith('[Vexor, E2E Vexor]'), { timeout: 30000 });
 const eft = await p.evaluate(() => document.querySelector('textarea.eft').value);
 check('web.e2e.eft-export: EFT export', eft.startsWith('[Vexor, E2E Vexor]') && eft.includes('Hammerhead II x5'), eft.split('\n')[0]);
 check('web.e2e.eft-export-mutated: mutated module EFT round trip', eft.includes('Stasis Webifier II [1]') && eft.includes('[1] Stasis Webifier II\n  Unstable Stasis Webifier Mutaplasmid\n') && eft.includes('maxRange 12000'), eft.split('\n').slice(-3).join(' / '));
-await clickText('.dialog button', 'Export DNA');
+await clickText('.import-export button', 'Export DNA');
+await p.waitForFunction(() => /^\d+:/.test(document.querySelector('textarea.eft')?.value ?? '') && document.querySelector('textarea.eft').value.endsWith('::'), { timeout: 30000 });
 const dna = await p.evaluate(() => document.querySelector('textarea.eft').value);
 check('web.e2e.dna-export: DNA export', /^626:/.test(dna) && dna.endsWith('::'), dna);
-await clickText('.dialog button', 'Export multibuy');
+await clickText('.import-export button', 'Export multibuy');
+await p.waitForFunction(() => document.querySelector('textarea.eft')?.value.startsWith('Vexor\n'), { timeout: 30000 });
 const mb = await p.evaluate(() => document.querySelector('textarea.eft').value);
 check('web.e2e.multibuy-export: multibuy export', /^Vexor\n/.test(mb) && mb.includes('Hammerhead II x5') && mb.includes('Heavy Neutron Blaster II x2'), mb.split('\n').length + ' lines');
-await clickText('.dialog button', 'Export ESI JSON');
+await clickText('.import-export button', 'Export ESI JSON');
+await p.waitForFunction(() => {
+  try { return JSON.parse(document.querySelector('textarea.eft')?.value ?? '').ship_type_id === 626; } catch { return false; }
+}, { timeout: 30000 });
 const esi = await p.evaluate(() => document.querySelector('textarea.eft').value);
 let ej = null; try { ej = JSON.parse(esi); } catch {}
 check('web.e2e.esi-json-export: ESI JSON export', ej?.ship_type_id === 626 && ej.items.some((i) => i.flag === 27 || i.flag === 'HiSlot0') && ej.items.some((i) => i.flag === 87 || i.flag === 'DroneBay'), ej ? ej.items.length + ' items' : esi.slice(0, 80));
-// Pyfa formats through the exfa-formats module: EVE XML export, ship-stats text (engine stats of the shipstats request)
+// Pyfa formats through the main Engine WASM: EVE XML export and ship-stats text.
 const prov = await p.evaluate(() => document.querySelector('.formats-provider')?.dataset.provider);
-check('web.e2e.formats-provider: imports / exports run through exfa-formats (WASM)', prov === 'exfa-formats', prov);
+check('web.e2e.formats-provider: imports / exports run through the main Engine WASM', prov === 'engine-wasm', prov);
 let xml = '';
-if (await p.$('.dialog button.export-xml')) { await p.click('.dialog button.export-xml'); xml = await p.evaluate(() => document.querySelector('textarea.eft').value); }
+if (await p.$('.import-export button.export-xml')) {
+  await p.click('.import-export button.export-xml');
+  await p.waitForFunction(() => document.querySelector('textarea.eft')?.value.includes('<fitting name="E2E Vexor">'), { timeout: 30000 });
+  xml = await p.evaluate(() => document.querySelector('textarea.eft').value);
+}
 check('web.e2e.xml-export: EVE XML export', xml.includes('<fitting name="E2E Vexor">') && xml.includes('base_type="Stasis Webifier II"'), xml.split('\n').length + ' lines');
 let ss = '';
-if (await p.$('.dialog button.export-shipstats')) {
-  await p.click('.dialog button.export-shipstats');
+if (await p.$('.import-export button.export-shipstats')) {
+  await p.click('.import-export button.export-shipstats');
   ss = await p.waitForFunction(() => { const v = document.querySelector('textarea.eft').value; return v && !v.startsWith('<?xml') ? v : null; }, { timeout: 30000 }).then((h) => h.jsonValue()).catch(() => '');
 }
-check('web.e2e.shipstats-export: ship stats export (engine stats + formats module)', /Vexor/.test(ss) && /DPS|dps/.test(ss), ss.split('\n').slice(0, 2).join(' / '));
-if (await p.$('.dialog')) await clickText('.dialog button', 'Close');
+check('web.e2e.shipstats-export: ship stats export (Engine stats + formats RPC)', /Vexor/.test(ss) && /DPS|dps/.test(ss), ss.split('\n').slice(0, 2).join(' / '));
 
 // implant sets (SDE presets): applying High-grade Snake fills slots 1-6, keeps the slot-7+ implant, raises velocity
-await clickText('.center .tabs button', 'Fit');
-await clickText('.center .tabs button', 'Fitting');
+await clickText('.fit-area .tabs button', 'Fitting');
 s = await stats();
 const hasSets = await p.evaluate(() => !!document.querySelector('select.implantset option[value="snake.high-grade"]'));
 if (hasSets) {
@@ -255,7 +258,6 @@ const d5 = s.offense.total.dps.total;
 await clickText('.left .tabs button', 'Character');
 await clickText('.character button', 'Clone');
 await p.evaluate(() => { const sel = [...document.querySelectorAll('.character select')].find((x) => x.closest('label')?.textContent.includes('default level')); sel.value = '0'; sel.dispatchEvent(new Event('change', { bubbles: true })); });
-await clickText('.center .tabs button', 'Fit');
 const chSel = await p.$('.fithead select[title=Character]');
 const cid = await p.evaluate(() => [...document.querySelector('.fithead select[title=Character]').options].find((o) => o.text.includes('(copy)'))?.value);
 await chSel.select(cid);
@@ -263,7 +265,7 @@ s = await waitNew(s);
 check('web.e2e.custom-character: custom character (all 0) lowers dps', s.offense.total.dps.total < d5, `${d5} -> ${s.offense.total.dps.total}`);
 check('web.e2e.missing-skills: missing skills reported', (s.violations ?? []).some((v) => v.code === 'MISSING_SKILL'));
 // per-module spool-up (Triglavian disintegrator)
-await p.goto(`${url}${sep}engine=${engine}&eft=${encodeURIComponent('[Vedmak, E2E Vedmak]\n\nHeavy Entropic Disintegrator II, Baryon Exotic Plasma M\n')}`, { waitUntil: 'networkidle0', timeout: 120000 });
+await p.goto(withQuery(`eft=${encodeURIComponent('[Vedmak, E2E Vedmak]\n\nHeavy Entropic Disintegrator II, Baryon Exotic Plasma M\n')}`), { waitUntil: 'networkidle0', timeout: 120000 });
 await p.waitForFunction(() => window.__lastStats?.ship?.name === 'Vedmak', { timeout: 120000 });
 s = await stats();
 const sp1 = s.offense?.total?.weapon_dps;
@@ -272,29 +274,36 @@ s = await waitNew(s);
 check('web.e2e.per-module-spool: per-module spool 0% lowers disintegrator dps', s.offense?.total?.weapon_dps < sp1, `${sp1} -> ${s.offense?.total?.weapon_dps}`);
 
 // ESI JSON re-import (new fit)
-await clickText('header button', 'Import / export');
-await p.evaluate((t) => { const ta = document.querySelector('textarea.eft'); const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; set.call(ta, t); ta.dispatchEvent(new Event('input', { bubbles: true })); }, esi);
-await clickText('.dialog button', 'Import');
-await new Promise((r) => setTimeout(r, 500));
-await new Promise((r) => setTimeout(r, 1500));
-const imp = await p.evaluate(() => ({ open: !!document.querySelector('.dialog'), msg: document.querySelector('.dialog p.muted')?.textContent ?? '', ship: window.__lastStats?.ship?.name, mods: window.__lastStats?.modules?.length }));
+await clickText('.center .tabs button', 'Import-export');
+const prevEsiFit = await p.evaluate(() => window.__lastStatsFit);
+await setText(esi);
+await clickText('.import-export button', 'Import');
+await p.waitForFunction((prev) => window.__lastStatsFit !== prev && window.__lastStats?.ship?.name === 'Vexor', { timeout: 30000 }, prevEsiFit).catch(() => null);
+const imp = await p.evaluate(() => {
+  const msg = document.querySelector('.import-export p.muted')?.textContent ?? '';
+  return { open: !!document.querySelector('.import-export'), msg, kind: msg.match(/\((JSON|XML|EFT)\)$/)?.[1] ?? '', ship: window.__lastStats?.ship?.name, mods: window.__lastStats?.modules?.length, fit: window.__lastStatsFit, requestShip: window.__lastRequest?.ship?.type_id };
+});
 // ESI fitting JSON carries no mutation data: like Pyfa, the import drops the abyssal web (15 -> 14 modules)
-check('web.e2e.esi-json-reimport: ESI JSON re-import', !imp.open && imp.ship === 'Vexor' && imp.mods === 14, imp.msg || `${imp.ship}, ${imp.mods} modules`);
+check('web.e2e.esi-json-reimport: ESI JSON re-import', imp.open && imp.kind === 'JSON' && imp.ship === 'Vexor' && imp.mods === 14, `${imp.msg}; ${imp.ship}, ${imp.mods} modules (type ${imp.requestShip}, fit ${imp.fit})`);
 
-// EVE XML re-import (formats module) -> new fit with the mutated web
+// EVE XML re-import through the Engine formats RPC -> new fit with the mutated web
 if (xml) {
-  await clickText('header button', 'Import / export');
-  await p.evaluate((t) => { const ta = document.querySelector('textarea.eft'); const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; set.call(ta, t); ta.dispatchEvent(new Event('input', { bubbles: true })); }, xml);
-  await clickText('.dialog button', 'Import');
-  await new Promise((r) => setTimeout(r, 1500));
-  const xi = await p.evaluate(() => ({ open: !!document.querySelector('.dialog'), msg: document.querySelector('.dialog p.muted')?.textContent ?? '', ship: window.__lastStats?.ship?.name, mods: window.__lastStats?.modules?.length, abyssal: document.body.textContent.includes('Abyssal Stasis Webifier') }));
-  check('web.e2e.xml-reimport: EVE XML re-import keeps the mutated module', !xi.open && xi.ship === 'Vexor' && xi.mods === 15 && xi.abyssal, xi.msg || `${xi.ship}, ${xi.mods} modules`);
+  await clickText('.center .tabs button', 'Import-export');
+  const prevXmlFit = await p.evaluate(() => window.__lastStatsFit);
+  await setText(xml);
+  await clickText('.import-export button', 'Import');
+  await p.waitForFunction((prev) => window.__lastStatsFit !== prev && window.__lastStats?.ship?.name === 'Vexor', { timeout: 30000 }, prevXmlFit).catch(() => null);
+  const xi = await p.evaluate(() => {
+    const msg = document.querySelector('.import-export p.muted')?.textContent ?? '';
+    return { open: !!document.querySelector('.import-export'), msg, kind: msg.match(/\((JSON|XML|EFT)\)$/)?.[1] ?? '', ship: window.__lastStats?.ship?.name, mods: window.__lastStats?.modules?.length, abyssal: document.body.textContent.includes('Abyssal Stasis Webifier'), fit: window.__lastStatsFit, requestShip: window.__lastRequest?.ship?.type_id };
+  });
+  check('web.e2e.xml-reimport: EVE XML re-import keeps the mutated module', xi.open && xi.kind === 'XML' && xi.ship === 'Vexor' && xi.mods === 15 && xi.abyssal, `${xi.msg}; ${xi.ship}, ${xi.mods} modules; abyssal ${xi.abyssal} (type ${xi.requestShip}, fit ${xi.fit})`);
 } else check('web.e2e.xml-reimport: EVE XML re-import keeps the mutated module', false, 'no XML export');
 
 // multi-fit EFT paste + fit browser grouping
-await clickText('header button', 'Import / export');
+await clickText('.center .tabs button', 'Import-export');
 await p.evaluate((t) => { const ta = document.querySelector('textarea.eft'); const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; set.call(ta, t); ta.dispatchEvent(new Event('input', { bubbles: true })); }, '[Rifter, Multi A]\n200mm AutoCannon II\n\n[Merlin, Multi B]\nLight Neutron Blaster II\n');
-await clickText('.dialog button', 'Import');
+await clickText('.import-export button', 'Import');
 await new Promise((r) => setTimeout(r, 800));
 await clickText('.left .tabs button', 'Fits');
 const fb = await p.evaluate(() => ({ groups: [...document.querySelectorAll('.fitbrowser summary')].map((x) => x.textContent), names: [...document.querySelectorAll('.fitbrowser li')].map((x) => x.textContent) }));
@@ -303,9 +312,9 @@ await p.type('.fitbrowser .search', 'Merlin');
 const fbn = await p.evaluate(() => document.querySelectorAll('.fitbrowser li').length);
 check('web.e2e.fit-browser-search: fit browser search', fbn === 1, fbn);
 
-// prices: the engine's price block (docs/23) on F backends; "update prices" injects the deployed latest
+// Prices use the Engine price block; "update prices" injects the deployed latest
 // EXFA-Data snapshot (prices_load); "my prices" are local price_overrides (self-made = 0), kept in localStorage
-const PRICING = engine === 'wasm-worker' || engine === 'http';
+const PRICING = true;
 if (PRICING) {
   const pr = await p.waitForFunction(() => window.__lastStats?.price && window.__lastStats, { timeout: 60000 }).then((h) => h.jsonValue()).catch(() => null);
   const ui = await p.evaluate(() => ({ total: document.querySelector('.pricetotal')?.textContent ?? '', prov: document.querySelector('.price-prov')?.dataset.source ?? '' }));
@@ -336,13 +345,10 @@ if (PRICING) {
   await p.click('.price-update');
   const back = await p.waitForFunction(() => window.__lastStats?.provenance?.price_source === 'snapshot' && !Object.keys(window.__lastStats.price.sources).some((s) => s.startsWith('override')) && window.__lastStats, { timeout: 30000 }).then((h) => h.jsonValue()).catch(() => null);
   check('web.e2e.price-reset: clearing my prices and "update prices" returns to the embedded snapshot', back && back.provenance.price_snapshot_id === embeddedId, back ? JSON.stringify(back.price.sources) : 'not reset');
-} else {
-  const un = await p.waitForSelector('.price-unsupported', { timeout: 10000 }).then(() => true).catch(() => false);
-  check('web.e2e.price-unsupported: backends without the engine price block say so', un);
 }
 
 // fighters: abilities
-await p.goto(`${url}${sep}engine=${engine}&eft=${encodeURIComponent(CARRIER)}`, { waitUntil: 'networkidle0', timeout: 120000 });
+await p.goto(withQuery(`eft=${encodeURIComponent(CARRIER)}`), { waitUntil: 'networkidle0', timeout: 120000 });
 await p.waitForFunction(() => window.__lastStats?.ship?.name === 'Thanatos', { timeout: 120000 });
 s = await stats();
 const f0 = s.offense?.total?.fighter_dps ?? s.offense?.total?.drone_dps;
@@ -355,7 +361,7 @@ const f1 = s.offense?.total?.fighter_dps ?? s.offense?.total?.drone_dps;
 check('web.e2e.fighter-ability-toggle: disabling an attack ability lowers fighter dps', f1 < f0, `${f0} -> ${f1}`);
 // --- milestone 3: what-if, compare, multi-fit graphs, target fit, ECM burst graph (library now holds several fits) ---
 const RIFTER = '[Rifter, E2E Rifter]\nGyrostabilizer II\n\n1MN Afterburner II\n\n200mm AutoCannon II, EMP S\n200mm AutoCannon II, EMP S\n';
-await p.goto(`${url}${sep}engine=${engine}&eft=${encodeURIComponent(RIFTER)}`, { waitUntil: 'networkidle0', timeout: 120000 });
+await p.goto(withQuery(`eft=${encodeURIComponent(RIFTER)}`), { waitUntil: 'networkidle0', timeout: 120000 });
 await p.waitForFunction(() => window.__lastStats?.ship?.name === 'Rifter', { timeout: 120000 });
 s = await stats();
 const rd0 = s.offense?.total?.dps?.total;
@@ -376,12 +382,12 @@ await clickText('header button', '↶ Undo');
 s = await waitNew(s);
 check('web.e2e.whatif-undo: undo after apply', Math.abs(s.offense?.total?.dps?.total - rd0) < 1e-6, s.offense?.total?.dps?.total);
 // compare: the active Rifter against the other frigates in the library (Multi A Rifter, Multi B Merlin)
-await clickText('.center .tabs button', 'Compare');
+await clickText('.center .tabs button', 'Fit compare');
 await p.waitForSelector('.compare');
 await p.evaluate(() => { for (const n of ['Multi A', 'Multi B']) { const c = document.querySelector(`.compare input.cmp-fit[data-fit="${n}"]`); if (c && !c.checked) c.click(); } });
 const cmp = await p.waitForFunction(() => window.__lastCompare?.fits?.length >= 3 && window.__lastCompare, { timeout: 60000 }).then((h) => h.jsonValue()).catch(() => null);
 const dpsRow = cmp?.rows.find((r) => r.key === 'dps');
-check('web.e2e.compare-batch: the compare window computes all fits in one engine batch call (docs/23) on F backends, one calc per fit elsewhere', cmp?.via === (engine === 'wasm-worker' || engine === 'http' ? 'batch' : 'calc') && await p.evaluate((v) => document.querySelector('.cmp-via')?.dataset.via === v, cmp?.via), cmp?.via);
+check('web.e2e.compare-batch: the compare window computes all fits in one Engine batch call', cmp?.via === 'batch' && await p.evaluate((v) => document.querySelector('.cmp-via')?.dataset.via === v, cmp?.via), cmp?.via);
 check('web.e2e.compare-fits: compare table of 3 fits with best values marked', cmp && cmp.fits[0] === 'E2E Rifter' && dpsRow && dpsRow.values.length === cmp.fits.length && Math.abs(dpsRow.values[0] - rd0) < 1e-6 && cmp.rows.some((r) => r.best.length) && await p.evaluate(() => document.querySelectorAll('.cmp-table td.best').length > 0), cmp ? `${cmp.fits.join(' | ')}; ${cmp.rows.length} metrics` : 'no result');
 // graphs: overlay Multi A on the dps graph, then Multi B as the target fit, then the ECM burst graph
 await clickText('.center .tabs button', 'Graphs');
@@ -390,7 +396,7 @@ await p.select('.graphs select.graph-kind', 'dps');
 await p.evaluate(() => { document.querySelector('.graph-overlay').open = true; document.querySelector('.graph-overlay input[data-fit="Multi A"]').click(); });
 const og = await p.waitForFunction(() => window.__lastGraph?.fits?.length === 2 && window.__lastGraph.series?.some((x) => x.name.startsWith('Multi A:')) && window.__lastGraph, { timeout: 60000 }).then((h) => h.jsonValue()).catch(() => null);
 const nLines = await p.evaluate(() => document.querySelectorAll('svg.chart polyline').length);
-check('web.e2e.graph-overlay: dps graph overlays a second fit', og && og.source === (GRAPH_RPC ? 'engine' : 'approx') && nLines >= 2, og ? `${og.source}: ${og.series.map((x) => x.name).join(', ')}` : 'no overlay');
+check('web.e2e.graph-overlay: dps graph overlays a second fit', og && og.source === 'engine' && nLines >= 2, og ? `${og.source}: ${og.series.map((x) => x.name).join(', ')}` : 'no overlay');
 if (GRAPH_RPC) {
   const mb = await p.evaluate(() => [...document.querySelector('.graphs select.graph-target').options].find((o) => o.text === 'Multi B')?.value);
   await p.select('.graphs select.graph-target', mb);
@@ -407,33 +413,32 @@ if (GRAPH_RPC) {
   const ed = await p.waitForFunction(() => window.__lastGraph?.kind === 'ecm' && window.__lastGraph.series?.some((x) => x.name.startsWith('damage dealt')) && window.__lastGraph, { timeout: 60000 }).then((h) => h.jsonValue()).catch(() => null);
   check('web.e2e.graph-ecm-damage: ECM burst graph, damage dealt before dying', ed && ed.series[0].n > 10, ed ? `${ed.series[0].n} points` : 'none');
 }
-await clickText('.center .tabs button', 'Fit');
-
-// About / engine page
-await clickText('.left .tabs button', 'About');
-const ab2 = await p.evaluate(() => ({ be: document.querySelector('.about-backend')?.textContent, eng: document.querySelector('.about-engine')?.textContent ?? '',
-  data: document.querySelector('.about-dataset')?.textContent ?? '', links: document.querySelectorAll('.about a').length }));
-const abG = await p.evaluate(() => document.querySelector('.about-graphs')?.textContent ?? '');
-check('web.e2e.about-graph-engine: about page: graph engine', GRAPH_RPC ? abG.startsWith(engine) : abG.startsWith('UI approximation'), abG);
-check('web.e2e.about-page: about page: backend, engine, dataset, links', ab2.be === engine && ab2.eng.length > 3 && !ab2.eng.startsWith('—') && ab2.data.includes('3569502') && ab2.links >= 8, JSON.stringify(ab2));
-// full zh-CN UI: tabs, stats sections, slot headers and the import/export dialog are in Chinese (no English UI words left)
+// About is an anchored popover from the brand.
+await clickText('.brand', 'EXFA');
+const ab2 = await p.evaluate(() => ({ status: document.querySelector('.about-status')?.textContent ?? '',
+  eng: document.querySelector('.about-engine')?.textContent ?? '', data: document.querySelector('.about-dataset')?.textContent ?? '',
+  timings: document.querySelector('.about-timings')?.textContent ?? '', links: document.querySelectorAll('.about a').length }));
+check('web.e2e.about-page: About popover shows engine, dataset, startup timings and repository links',
+  ab2.status.includes('exfa-engine 0.2.0') && /\bSDE \d+\b/.test(ab2.eng) && /\bSDE \d+\b/.test(ab2.data) && ab2.timings.includes('Dataset') && ab2.timings.includes('First calc') && ab2.links >= 6,
+  JSON.stringify(ab2));
+// Full zh-CN UI: tabs, stats sections, slot headers and import/export controls have no untranslated labels.
 await langSel('zh');
 await new Promise((r) => setTimeout(r, 300));
 const zhUi = await p.evaluate(() => ({ tabs: [...document.querySelectorAll('.tabs button')].map((x) => x.textContent.replace(/\s*\(\d+\)$/, '')),
   sections: [...document.querySelectorAll('.stats .section h3')].map((x) => x.firstChild?.textContent ?? ''), slots: [...document.querySelectorAll('.slotgroup h4')].map((x) => x.firstChild?.textContent ?? '') }));
-await clickText('header button', '导入 / 导出');
-const zhIo = await p.evaluate(() => ({ h: document.querySelector('.dialog h2')?.textContent, btns: [...document.querySelectorAll('.dialog button')].map((x) => x.textContent) }));
-await p.evaluate(() => document.querySelector('.modal')?.click());
+await clickText('.center .tabs button', '导入 / 导出');
+const zhIo = await p.evaluate(() => [...document.querySelectorAll('.import-export button')].map((x) => x.textContent));
 await langSel('en');
 const latin = (xs) => xs.filter((x) => /[a-z]{3,}/.test(x.replace(/DPS|EFT|DNA|ESI|JSON|XML|Ctrl/g, '')));
-const zhAll = [...zhUi.tabs, ...zhUi.sections, ...zhUi.slots, zhIo.h ?? '', ...zhIo.btns];
-check('web.e2e.zh-ui: zh-CN UI (tabs, stats sections, slots, import/export dialog) has no untranslated labels', zhUi.tabs.includes('假设分析') && zhUi.tabs.includes('对比') && zhUi.sections.length > 3 && zhIo.h === '导入 / 导出' && latin(zhAll).length === 0, latin(zhAll).join(' | ') || `${zhAll.length} labels`);
+const zhAll = [...zhUi.tabs, ...zhUi.sections, ...zhUi.slots, ...zhIo];
+check('web.e2e.zh-ui: zh-CN UI (dock tabs, stats sections, slots, import/export controls) has no untranslated labels',
+  zhUi.tabs.includes('假设分析') && zhUi.tabs.includes('配置对比') && zhUi.sections.length > 3 && zhIo.includes('导入') && latin(zhAll).length === 0,
+  latin(zhAll).join(' | ') || `${zhAll.length} labels`);
 // ---- fit library (IndexedDB): Pyfa saved-fits database import, folders / tags, rename, duplicate, delete, exports,
 // backup / restore, persistence across reloads, DNA import, migration of the localStorage library ----
 {
 const FIX = new URL('../src/test/fixtures/', import.meta.url).pathname;
 const pyfaStats = JSON.parse(fs.readFileSync(FIX + 'pyfa-saveddata.stats.json', 'utf8'));
-const PRECISE = engine === 'wasm-worker' || engine === 'http'; // engine-backed stats are held to the engine's exact numbers
 const libFits = () => p.evaluate(() => [...document.querySelectorAll('.lib-fit')].map((l) => ({ id: l.dataset.fitId, name: l.dataset.fitName, folder: l.closest('details')?.dataset.folder ?? null, tags: [...l.querySelectorAll('.tag')].map((x) => x.textContent) })));
 // name, or { id } (names are not unique: the XML re-import below adds a second "Pyfa Vexor")
 const openFit = async (name, ship) => {
@@ -463,7 +468,7 @@ for (const n of pyfaNames) {
   cmp.push({ n, ok, got, want });
 }
 check('web.e2e.pyfa-db-stats: Pyfa database fits compute Pyfa\'s numbers (dps vs target profile, EHP vs damage pattern, speed with a projected web, CPU)',
-  PRECISE ? cmp.every((c) => c.ok) : cmp.every((c) => c.got), cmp.map((c) => `${c.n}: ${c.got ? c.got.dps.toFixed(2) : '—'}/${c.want.dps.toFixed(2)} dps${c.ok ? '' : ' ✗'}`).join('; '));
+  cmp.every((c) => c.ok), cmp.map((c) => `${c.n}: ${c.got ? c.got.dps.toFixed(2) : '—'}/${c.want.dps.toFixed(2)} dps${c.ok ? '' : ' ✗'}`).join('; '));
 await openFit('Pyfa Vexor', 'Vexor');
 const links = await p.evaluate(() => ({ tab: [...document.querySelectorAll('.center .tabs button')].map((b) => b.textContent).find((x) => x.includes('(')) ?? '', char: document.querySelector('.fithead select[title=Character]')?.selectedOptions[0]?.textContent }));
 check('web.e2e.pyfa-db-links: projected fit and fleet booster fit links, saved character', links.tab.includes('(2)') && links.char?.includes('Pyfa Pilot'), JSON.stringify(links));
@@ -485,9 +490,11 @@ await p.type('.fitbrowser .search', 'pyfa thanatos');
 const found = (await libFits()).map((f) => f.name);
 await setIn('.fitbrowser .search', '');
 check('web.e2e.library-search-tags: tag filter and search (ship name)', tagged.join() === 'Renamed Rifter' && found.join() === 'Pyfa Thanatos', `${tagged} | ${found}`);
-promptAnswer = 'PvP/Small';
 await p.evaluate(() => document.querySelector('details.lib-folder[data-folder="PvP/Frigates"] .lib-folder-rename').click());
-await new Promise((r) => setTimeout(r, 300));
+await p.click('details.lib-folder[data-folder="PvP/Frigates"] .inline-edit');
+await setIn('details.lib-folder[data-folder="PvP/Frigates"] input.inline-edit-input', 'PvP/Small');
+await p.keyboard.press('Enter');
+await p.waitForFunction((id) => [...document.querySelectorAll('.lib-fit')].some((x) => x.dataset.fitId === id && x.closest('details')?.dataset.folder === 'PvP/Small'), { timeout: 10000 }, rif.id);
 lf = await libFits();
 check('web.e2e.library-folder-rename: renaming a folder moves its fits', lf.find((f) => f.id === rif.id)?.folder === 'PvP/Small', lf.find((f) => f.id === rif.id)?.folder);
 
@@ -499,15 +506,32 @@ lf = await libFits();
 const dup = lf.find((f) => f.name === 'Renamed Rifter (copy)');
 const dupOk = lf.length === nBefore + 1 && dup && dup.folder === 'PvP/Small' && dup.tags.join() === 'brawler,solo';
 await p.evaluate((id) => document.querySelector(`.lib-fit[data-fit-id="${id}"] .lib-del`).click(), dup?.id);
-await new Promise((r) => setTimeout(r, 300));
+await p.waitForSelector('.toast button:not(.toast-dismiss)', { timeout: 10000 });
+const immediatelyDeleted = await p.waitForFunction((id) => ![...document.querySelectorAll('.lib-fit')].some((x) => x.dataset.fitId === id), { timeout: 10000 }, dup?.id).then(() => true).catch(() => false);
+const deleteToast = await p.$$eval('.toast', (els, name) => els.map((el) => el.textContent ?? '').find((text) => text.includes(`Deleted “${name}”`)) ?? '', dup?.name);
+const namedDeleteNotice = deleteToast.includes(`Deleted “${dup?.name}”`);
+await p.click('.toast button:not(.toast-dismiss)');
+const restored = await p.waitForFunction((id) => [...document.querySelectorAll('.lib-fit')].some((x) => x.dataset.fitId === id), { timeout: 10000 }, dup?.id).then(() => true).catch(() => false);
+await p.evaluate((id) => document.querySelector(`.lib-fit[data-fit-id="${id}"] .lib-del`).click(), dup?.id);
+await p.waitForFunction((id) => ![...document.querySelectorAll('.lib-fit')].some((x) => x.dataset.fitId === id), { timeout: 10000 }, dup?.id);
 lf = await libFits();
-check('web.e2e.library-duplicate-delete: duplicate keeps folder and tags; delete removes the fit', dupOk && lf.length === nBefore && !lf.some((f) => f.name.endsWith('(copy)')), `${nBefore} -> ${lf.length}`);
+check('web.e2e.library-duplicate-delete: duplicate keeps folder and tags; delete is immediate and Undo restores it',
+  dupOk && immediatelyDeleted && namedDeleteNotice && restored && lf.length === nBefore && !lf.some((f) => f.name.endsWith('(copy)')),
+  `${nBefore} -> ${lf.length}; deleted ${immediatelyDeleted}, named notice ${namedDeleteNotice}, undo ${restored}; ${deleteToast}`);
 
 // bulk export: selected fits as one EVE XML (Pyfa backup shape) and as multi-fit EFT; XML re-import
 for (const n of ['Pyfa Vexor', 'Pyfa Svipul']) await p.evaluate((nm) => document.querySelector(`.lib-fit[data-fit-name="${nm}"] .lib-sel`).click(), n);
 await p.click('.lib-export-xml');
+await p.waitForFunction(() => {
+  const x = window.__lastLibraryExport;
+  return x?.format === 'xml' && x.fits === 2 && (x.text.match(/<fitting /g) ?? []).length === 2;
+}, { timeout: 30000 });
 const xe = await p.evaluate(() => window.__lastLibraryExport);
 await p.click('.lib-export-eft');
+await p.waitForFunction(() => {
+  const x = window.__lastLibraryExport;
+  return x?.format === 'eft' && x.fits === 2 && (x.text.match(/^\[[^\]\n]+, [^\]\n]+\]$/gm) ?? []).length === 2;
+}, { timeout: 30000 });
 const ee = await p.evaluate(() => window.__lastLibraryExport);
 const xmlFile = path.join(os.tmpdir(), `e2e-library-${process.pid}.xml`);
 fs.writeFileSync(xmlFile, xe?.text ?? '');
@@ -535,23 +559,30 @@ check('web.e2e.library-backup-restore: JSON backup (v2: folders, tags) restores 
 // DNA import (dialog): a fit's DNA, plain and as an in-game fitting link; each gives the same
 // fit back (DNA round trip, drones launched, same stats for both)
 const dnaImport = async (text) => {
-  await clickText('header button', 'Import / export');
-  await p.evaluate((t) => { const ta = document.querySelector('textarea.eft'); const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; set.call(ta, t); ta.dispatchEvent(new Event('input', { bubbles: true })); }, text);
+  await clickText('.center .tabs button', 'Import-export');
+  await setText(text);
   const prev = await p.evaluate(() => window.__lastStatsFit);
-  await clickText('.dialog button', 'Import');
+  await clickText('.import-export button', 'Import');
   const st = await p.waitForFunction((pf) => window.__lastStatsFit !== pf && window.__lastStats?.offense && window.__lastStats, { timeout: 60000 }, prev).then((h) => h.jsonValue()).catch(() => null);
-  await clickText('header button', 'Import / export');
-  await clickText('.dialog button', 'Export DNA');
+  await clickText('.center .tabs button', 'Import-export');
+  await setText('');
+  await clickText('.import-export button', 'Export DNA');
+  await p.waitForFunction((ship) => {
+    const value = document.querySelector('textarea.eft')?.value ?? '';
+    return value.startsWith(`${ship}:`) && value.endsWith('::');
+  }, { timeout: 30000 }, st?.ship?.type_id ?? -1).catch(() => null);
   const back = await p.evaluate(() => document.querySelector('textarea.eft').value);
-  await clickText('.dialog button', 'Close');
   return { st, back };
 };
 await clickText('.left .tabs button', 'Fits');
 const rs = await openFit('Renamed Rifter', 'Rifter');
-await clickText('header button', 'Import / export');
-await clickText('.dialog button', 'Export DNA');
+await clickText('.center .tabs button', 'Import-export');
+await clickText('.import-export button', 'Export DNA');
+await p.waitForFunction(() => {
+  const value = document.querySelector('textarea.eft')?.value ?? '';
+  return /^\d+:/.test(value) && value.endsWith('::');
+}, { timeout: 30000 });
 const rdna = await p.evaluate(() => document.querySelector('textarea.eft').value);
-await clickText('.dialog button', 'Close');
 const d1 = await dnaImport(rdna);
 const d2 = await dnaImport(`<url=fitting:${rdna}>DNA link Rifter</url>`);
 const dOk = (d) => d.st && d.st.ship?.name === 'Rifter' && d.back === rdna && d.st.offense.total.drone_dps > 0 && d.st.modules?.length === rs?.modules?.length && /(^|:)21898;/.test(rdna);
@@ -564,14 +595,14 @@ await clickText('.left .tabs button', 'Fits');
 const before = (await libFits()).map((f) => `${f.name}|${f.folder}|${f.tags}`).sort();
 await p.evaluate(() => window.__eveStore.flush());
 // same page without ?eft= (that would import the e2e Vexor again)
-await p.goto(`${url}${sep}engine=${engine}`, { waitUntil: 'networkidle0', timeout: 120000 });
+await p.goto(url, { waitUntil: 'networkidle0', timeout: 120000 });
 await p.waitForFunction(() => window.__lastStats?.offense, { timeout: 120000 });
 await clickText('.left .tabs button', 'Fits');
 await p.select('.lib-mode', 'folder');
 const after = (await libFits()).map((f) => `${f.name}|${f.folder}|${f.tags}`).sort();
 const kind = await p.evaluate(() => document.querySelector('.lib-status')?.dataset.kind);
 const vx = await openFit({ id: pyfaVexorId }, 'Vexor');
-check('web.e2e.library-reload-persistence: fits, folders and tags survive a reload (IndexedDB)', st0.kind === 'indexeddb' && kind === 'indexeddb' && after.length === before.length && after.join('\n') === before.join('\n') && after.some((x) => x.startsWith('Renamed Rifter|PvP/Small|brawler,solo')) && (!PRECISE || Math.abs(vx?.navigation?.max_velocity - pyfaStats['Pyfa Vexor'].max_velocity) < 1e-6),
+check('web.e2e.library-reload-persistence: fits, folders and tags survive a reload (IndexedDB)', st0.kind === 'indexeddb' && kind === 'indexeddb' && after.length === before.length && after.join('\n') === before.join('\n') && after.some((x) => x.startsWith('Renamed Rifter|PvP/Small|brawler,solo')) && Math.abs(vx?.navigation?.max_velocity - pyfaStats['Pyfa Vexor'].max_velocity) < 1e-6,
   `${kind}: ${before.length} -> ${after.length} fits, Vexor ${vx ? vx.navigation?.max_velocity : "no stats"}; ${before.filter((x) => !after.includes(x)).join(' / ')} => ${after.filter((x) => !before.includes(x)).join(' / ')}`);
 
 // migration: a fresh profile holding only the localStorage library of earlier versions
@@ -581,7 +612,7 @@ check('web.e2e.library-reload-persistence: fits, folders and tags survive a relo
   q.on('pageerror', (e) => errors.push(`migration page: ${e.message}`));
   const legacy = { lib: { fits: { legacy1: { id: 'legacy1', name: 'Legacy Rifter', ship_type_id: 587, mode_type_id: null, modules: [], drones: [], fighters: [], implants: [], boosters: [], cargo: [], projected: [], fleet: { booster_fit_ids: [], buffs: [] }, environment: [], system_security: null, character_id: 'all5', damage_pattern_id: 'uniform', target_profile_id: 'none', options: { factor_reload: false, spool: 1, rah: 'adapt' } } }, characters: {}, damagePatterns: {}, targetProfiles: {} }, settings: { activeFitId: 'legacy1', lang: 'en' } };
   await q.evaluateOnNewDocument((v) => { if (!sessionStorage.getItem('seeded')) { localStorage.setItem('eve-fit-web:v1', v); sessionStorage.setItem('seeded', '1'); } }, JSON.stringify(legacy));
-  await q.goto(`${url}${sep}engine=${engine}`, { waitUntil: 'networkidle0', timeout: 120000 });
+  await q.goto(url, { waitUntil: 'networkidle0', timeout: 120000 });
   await q.waitForFunction(() => window.__lastStats?.ship?.name === 'Rifter', { timeout: 120000 }).catch(() => null);
   await q.evaluate(() => window.__eveStore.flush());
   const m = await q.evaluate(() => ({ status: window.__eveStore?.status, ls: localStorage.getItem('eve-fit-web:v1'), backup: !!localStorage.getItem('eve-fit-web:v1:migrated') }));
@@ -593,10 +624,81 @@ check('web.e2e.library-reload-persistence: fits, folders and tags survive a relo
 }
 }
 
-// stats-ext outputs of F 20aa425 (tools/e2e-items.mjs)
+// Stats-ext outputs from the Engine WASM RPC.
 {
   const { itemChecks } = await import('./e2e-items.mjs');
-  await itemChecks({ p, url, sep, engine, check, stats, waitNew, clickText }).catch((e) => check('web.e2e.items-run: item checks ran to the end', false, e.stack?.split('\n').slice(0, 3).join(' | ')));
+  await itemChecks({ p, withQuery, check, stats, waitNew, clickText }).catch((e) => check('web.e2e.items-run: item checks ran to the end', false, e.stack?.split('\n').slice(0, 3).join(' | ')));
+}
+
+// Engine adjustments are visible, writable to the fit, and reversible from the notification.
+await p.goto(withQuery(`eft=${encodeURIComponent('[Confessor, E2E mode correction]\nDamage Control II\n')}`), { waitUntil: 'networkidle0', timeout: 120000 });
+await p.waitForFunction(() => window.__lastStats?.ship?.name === 'Confessor' && !window.__lastStats.error, { timeout: 120000 });
+const defaultModeStats = await stats();
+await p.evaluate(() => {
+  const mode = [...document.querySelectorAll('.fithead select')].find((select) => [...select.options].some((option) => option.textContent.includes('mode: default')));
+  if (!mode) return false;
+  mode.value = '';
+  mode.dispatchEvent(new Event('change', { bubbles: true }));
+  return true;
+});
+const correctionStats = await waitNew(defaultModeStats);
+const modeAdjustment = correctionStats.adjustments?.find((a) => a.code === 'MODE_DEFAULTED');
+const adjustmentTitle = await p.evaluate(() => document.querySelector('.adjustments li')?.title ?? '');
+check('web.e2e.adjustments-feedback: Engine corrections show localized details and can be written back',
+  !!modeAdjustment && adjustmentTitle.includes('/ship/mode_type_id') && adjustmentTitle.includes('From') && adjustmentTitle.includes('To'),
+  JSON.stringify({ adjustments: correctionStats.adjustments, title: adjustmentTitle }));
+if (modeAdjustment) {
+  await p.click('.adjustments-head button');
+  const written = await waitNew(correctionStats);
+  await p.waitForFunction(() => [...document.querySelectorAll('.toast')].some((el) => el.textContent?.includes('Applied one correction to the fit')), { timeout: 10000 });
+  const toastText = await p.$$eval('.toast', (els) => els.map((el) => el.textContent ?? '').find((text) => text.includes('Applied one correction to the fit')) ?? '');
+  check('web.e2e.adjustments-writeback: write back clears the correction and offers Undo',
+    !(written.adjustments?.length) && /Applied one correction to the fit/.test(toastText) && /Undo/.test(toastText),
+    `${JSON.stringify(written.adjustments)}; ${toastText}`);
+  await p.click('.toast button:not(.toast-dismiss)');
+  const restored = await waitNew(written);
+  check('web.e2e.adjustments-undo: Undo restores the corrected request',
+    restored.adjustments?.some((a) => a.code === 'MODE_DEFAULTED'),
+    JSON.stringify(restored.adjustments));
+} else {
+  check('web.e2e.adjustments-writeback: write back clears the correction and offers Undo', false, 'no MODE_DEFAULTED adjustment');
+  check('web.e2e.adjustments-undo: Undo restores the corrected request', false, 'no MODE_DEFAULTED adjustment');
+}
+
+await p.goto(withQuery(`eft=${encodeURIComponent(EFT)}`), { waitUntil: 'networkidle0', timeout: 120000 });
+await p.waitForFunction(() => window.__lastStats?.ship?.name === 'Vexor' && !window.__lastStats.error, { timeout: 120000 });
+for (const [width, height] of [[1600, 900], [1920, 1080]]) {
+  await p.setViewport({ width, height });
+  const layout = await p.evaluate(() => {
+    const panels = ['aside.left', '.center', 'aside.right'].map((selector) => {
+      const el = document.querySelector(selector);
+      return { selector, clientWidth: el?.clientWidth ?? 0, scrollWidth: el?.scrollWidth ?? Infinity };
+    });
+    const outside = [...document.querySelectorAll('main, main *')].flatMap((el) => {
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.right > window.innerWidth + 1
+        ? [`${el.tagName.toLowerCase()}.${String(el.className).replaceAll(' ', '.')}: ${rect.right.toFixed(1)}px`]
+        : [];
+    });
+    return { panels, outside };
+  });
+  check(`web.e2e.layout-panel-overflow-${width}: left, center and right fit their columns`,
+    layout.panels.every((panel) => panel.clientWidth > 0 && panel.scrollWidth <= panel.clientWidth + 1), JSON.stringify(layout.panels));
+  check(`web.e2e.layout-viewport-overflow-${width}: no main element extends beyond the viewport`,
+    layout.outside.length === 0, layout.outside.slice(0, 8).join('; '));
+}
+
+const activeFitId = await p.evaluate(() => window.__lastStatsFit);
+if (activeFitId) {
+  await p.evaluate(() => [...document.querySelectorAll('aside.left .tabs button')].find((button) => button.textContent?.startsWith('Fits'))?.click());
+  await p.waitForSelector(`.lib-fit[data-fit-id="${activeFitId}"] .lib-del`, { timeout: 10000 });
+  await p.evaluate((id) => document.querySelector(`.lib-fit[data-fit-id="${id}"] .lib-del`)?.click(), activeFitId);
+  await p.waitForFunction(() => document.querySelector('aside.right')?.textContent?.includes('No fit selected') && window.__lastStats === null, { timeout: 10000 });
+  const emptyRight = await p.$eval('aside.right', (el) => ({ text: el.textContent ?? '', tables: el.querySelectorAll('table').length }));
+  check('web.e2e.no-fit-clears-stats: deleting the active fit clears stats and shows the empty state',
+    /No fit selected/.test(emptyRight.text) && emptyRight.tables === 0, JSON.stringify(emptyRight));
+} else {
+  check('web.e2e.no-fit-clears-stats: deleting the active fit clears stats and shows the empty state', false, 'no active fit id');
 }
 
 check('web.e2e.no-page-errors: no page errors', errors.length === 0, errors.join(' | '));

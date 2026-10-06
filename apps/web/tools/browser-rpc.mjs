@@ -4,9 +4,8 @@
 //   node tools/browser-rpc.mjs <site-url> <engine-id> --http PORT   one browser kept open; POST /rpc (or /batch) with JSONL
 //     request lines, JSONL response lines back (tools/browser-engine.mjs uses it via BROWSER_RPC=http://127.0.0.1:PORT);
 //     header `x-prices: <file>` loads that price snapshot first (like `eve-fit --prices FILE`), no header clears it
-// Methods: graph, graph_specs, calc (engine), any other engine RPC method (batch, prices_load, ...; WASM backends), and eft_parse / eft_export / format_import / format_export (the page's
-// exfa-formats WASM module, like `eve-fit serve-stdio`). The requests go through the page's Engine adapter (Web Worker + WASM for the
-// in-browser backends), i.e. exactly the build that is deployed. Used to run the EXFA-Bench graphs-round2 suite
+// Methods: graph, graph_specs, calc, format RPCs, and other Engine RPC methods (batch, prices_load, ...). All calls go through the main
+// Engine WASM worker, i.e. exactly the build that is deployed. Used to run the EXFA-Bench graphs-round2 suite
 // (graphs/run_graphs.py --rpc-cmd) against the browser build.
 import puppeteer from 'puppeteer-core';
 import readline from 'node:readline';
@@ -20,7 +19,7 @@ const batch = process.argv.includes('--batch');
 const httpPort = process.argv.includes('--http') ? +process.argv[process.argv.indexOf('--http') + 1] : null;
 const b = await puppeteer.launch({ executablePath: process.env.CHROME ?? '/usr/bin/google-chrome', headless: true, args: ['--no-sandbox'] });
 const p = await b.newPage();
-await p.goto(`${url}${url.includes('?') ? '&' : '?'}engine=${engine}`, { waitUntil: 'networkidle0', timeout: 120000 });
+await p.goto(url, { waitUntil: 'networkidle0', timeout: 120000 });
 await p.waitForFunction((e) => window.__eveEngine?.info?.id === e, { timeout: 120000 }, engine);
 /** one JSONL line -> one JSONL line (batch: FitRequest -> FitStats; else {id, method, params} -> {id, result}) */
 async function handle(line, asBatch) {
@@ -37,16 +36,15 @@ async function handle(line, asBatch) {
       if (method === 'graph_specs') return e.graphSpecs ? e.graphSpecs() : null;
       // the engine's text where the backend gives it (eve-fit prints floats as 1.0; JSON.parse + stringify would not)
       if (method === 'calc') return e.rpcText ? { __text: await e.rpcText('calc', params) } : e.calc(params);
-      // shipstats like `eve-fit serve-stdio`: the engine computes shipstats_request(fit) first (all attributes, no spool-up,
-      // full precision), the formats module renders it from the exact stats text
-      if (method === 'format_export' && params?.format === 'shipstats' && !params.stats && !params.stats_json && window.__eveFormatsRpc) {
+      // shipstats: compute the full-precision request stats first, then pass them to the Engine formats RPC.
+      if (method === 'format_export' && params?.format === 'shipstats' && !params.stats && !params.stats_json) {
         const f = params.fit ?? {};
         const st = await e.calc({ ...f, options: { ...(f.options ?? {}), include_attributes: 'all', full_precision: true, default_spool: { type: 'spool_scale', amount: 0 } }, modules: (f.modules ?? []).map((m) => ({ ...m, spool: null })) });
         if (st?.error) return st;
-        return window.__eveFormatsRpc(method, { ...params, stats_json: JSON.stringify(st) });
+        return e.rpcRaw(method, { ...params, stats_json: JSON.stringify(st) });
       }
       if (['eft_parse', 'eft_export', 'format_import', 'format_export'].includes(method))
-        return window.__eveFormatsRpc ? window.__eveFormatsRpc(method, params) : { error: { code: 'UNKNOWN_METHOD', message: `${method}: no exfa-formats module` } };
+        return e.rpcRaw(method, params);
       // anything else (batch, prices_load, version, ...): the engine's own RPC, response passed through as is
       if (e.rpcText) return { __text: await e.rpcText(method, params) };
       if (e.rpcRaw) return { __raw: await e.rpcRaw(method, params) };

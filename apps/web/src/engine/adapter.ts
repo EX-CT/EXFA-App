@@ -1,6 +1,4 @@
-import { canonicalBackend } from './defaults';
-// Engine adapter: the UI talks to a stateless `calc(FitRequest) -> FitStats` function. Backends are swappable at
-// runtime (settings panel / ?engine= URL parameter), so the final engine choice does not touch UI code.
+// Engine adapter: the UI talks to a stateless calc function hosted in one Web Worker.
 
 export type FitStats = Record<string, any>;
 
@@ -11,24 +9,17 @@ export interface Engine {
   /** resolves when the engine can calculate; returns a human-readable description (engine name, dataset) */
   init(): Promise<string>;
   calc(request: unknown): Promise<FitStats>;
-  /** Optional graph RPC (CONTRACT-GRAPHS rev 0.2, EXFA-Bench `graphs-round2`). Engines without it leave these
-   *  undefined or resolve graphSpecs() to null; the UI then falls back to its own approximation graphs. */
+  /** Graph RPC (CONTRACT-GRAPHS rev 0.4). */
   graph?(request: GraphRequest): Promise<GraphResult>;
   graphSpecs?(): Promise<GraphSpecs | null>;
-  /** Optional engine RPC (full response {id, result} | {id, error}) for methods beyond calc/graph: docs/23 `batch`,
-   *  `prices_load`. Backends without an RPC leave it undefined; engines without the method answer UNKNOWN_METHOD. */
+  /** Full response ({id, result} | {id, error}) for engine RPCs beyond calc/graph. */
   rpcRaw?(method: string, params: unknown): Promise<{ result?: any; error?: { code: string; message: string } }>;
-  /** Backend that answers graph() when it is not this engine itself (see GRAPH_FALLBACK); set once graphSpecs() resolved. */
+  /** Engine providing graph RPC results. */
   readonly graphInfo?: EngineInfo;
   dispose(): void;
 }
 
-/** Backends whose graphs come from another backend's graph RPC while their own engine has none. The WASM build
- *  computes stats and graphs itself, so no current backend needs a fallback; kept for stored-config backends. */
-export const GRAPH_FALLBACK: Record<string, string> = {};
-
-
-/** GraphRequest per CONTRACT-GRAPHS 0.2: {schema_version, graph, fit, target?, x:{axis, values}, y:[...], params?, settings?} */
+/** GraphRequest per CONTRACT-GRAPHS 0.4. */
 export interface GraphRequest {
   schema_version: 1; graph: string; fit: unknown; target?: unknown;
   x: { axis: string; values: number[] }; y: string[]; params?: Record<string, unknown>; settings?: Record<string, unknown>;
@@ -40,21 +31,16 @@ export interface GraphSpecs { contract?: string; graphs: Record<string, { axes?:
 
 const asSpecs = (r: any): GraphSpecs | null => (r && !r.error && r.graphs && typeof r.graphs === 'object' ? r : null);
 
-export interface EngineConfig { backend: string; httpUrl: string; datasetUrl: string; wasmUrl: string }
-
-export const BACKENDS: EngineInfo[] = [
-  { id: 'wasm-worker', label: 'In-browser: EXFA engine (Rust→WASM, dataset compiled in; stats + graphs) in a Web Worker' },
-  { id: 'http', label: 'Local/remote HTTP engine (POST {url}/v1/calc, e.g. `exfa` behind tools/engine-bridge.mjs)' },
-];
+export interface EngineConfig { datasetUrl: string; wasmUrl: string }
 
 /** Worker-hosted in-browser engines (the worker owns its own dataset copy). */
 class WorkerEngine implements Engine {
   private w: Worker | null = null;
   private seq = 0;
   private pending = new Map<number, { ok: (v: any) => void; err: (e: Error) => void }>();
-  readonly info: EngineInfo;
+  readonly info: EngineInfo = { id: 'wasm-worker', label: 'EXFA Engine v0.2.0 · WebAssembly worker' };
   private readonly initMsg: Record<string, unknown>;
-  constructor(info: EngineInfo, initMsg: Record<string, unknown>) { this.info = info; this.initMsg = initMsg; }
+  constructor(initMsg: Record<string, unknown>) { this.initMsg = initMsg; }
 
   private call(msg: Record<string, unknown>): Promise<any> {
     const id = ++this.seq;
@@ -82,89 +68,8 @@ class WorkerEngine implements Engine {
   dispose() { this.w?.terminate(); this.w = null; }
 }
 
-class HttpEngine implements Engine {
-  readonly info: EngineInfo;
-  private readonly base: string;
-  constructor(info: EngineInfo, base: string) { this.info = info; this.base = base.replace(/\/+$/, ''); }
-  async init() {
-    try {
-      const r = await fetch(`${this.base}/v1/meta`);
-      if (r.ok) { const m = await r.json(); return `${m.engine ?? 'HTTP engine'} · SDE ${m.sde_build ?? '?'} @ ${this.base}`; }
-    } catch { /* fall through: try a calc-only server */ }
-    const r = await fetch(`${this.base}/healthz`).catch(() => null);
-    if (!r || !r.ok) throw new Error(`no engine at ${this.base}: GET /v1/meta failed. Is it running with CORS (tools/engine-bridge.mjs)? From the hosted site, allow the browser's local-network permission prompt.`);
-    return `HTTP engine @ ${this.base}`;
-  }
-  async calc(request: unknown) {
-    const r = await fetch(`${this.base}/v1/calc`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(request) });
-    const body = await r.json().catch(() => ({ error: { code: 'BAD_RESPONSE', message: `HTTP ${r.status}` } }));
-    return body;
-  }
-  /** Bridge routes POST /v1/graph and GET /v1/graph_specs (tools/engine-bridge.mjs, engines with the graph RPC). */
-  async graph(request: GraphRequest): Promise<GraphResult> {
-    const r = await fetch(`${this.base}/v1/graph`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(request) });
-    return r.json().catch(() => ({ error: { code: 'BAD_RESPONSE', message: `HTTP ${r.status}` } }));
-  }
-  async graphSpecs() {
-    try { const r = await fetch(`${this.base}/v1/graph_specs`); return r.ok ? asSpecs(await r.json()) : null; } catch { return null; }
-  }
-  /** Bridge route POST /v1/rpc {method, params} (tools/engine-bridge.mjs). */
-  async rpcRaw(method: string, params: unknown) {
-    const r = await fetch(`${this.base}/v1/rpc`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ method, params }) });
-    if (!r.ok) return { error: { code: 'UNKNOWN_METHOD', message: `HTTP ${r.status}` } };
-    return r.json().catch(() => ({ error: { code: 'BAD_RESPONSE', message: `HTTP ${r.status}` } }));
-  }
-  dispose() {}
-}
-
-/** Fit stats from `primary`; graph RPC from `primary` if it has one, else from a lazily started second backend. */
-class GraphSplitEngine implements Engine {
-  graphInfo?: EngineInfo;
-  private g: Promise<Engine | null> | null = null;
-  private own: boolean | null = null;
-  private readonly primary: Engine;
-  private readonly makeGraph: () => Engine;
-  constructor(primary: Engine, makeGraph: () => Engine) { this.primary = primary; this.makeGraph = makeGraph; }
-  get info() { return this.primary.info; }
-  init() { return this.primary.init(); }
-  calc(request: unknown) { return this.primary.calc(request); }
-  get rpcRaw() { return this.primary.rpcRaw?.bind(this.primary); }
-  get rpcText() { return (this.primary as WorkerEngine).rpcText?.bind(this.primary); }
-  private second() {
-    return (this.g ??= (async () => {
-      const e = this.makeGraph();
-      try { await e.init(); return e; } catch { e.dispose(); return null; }
-    })());
-  }
-  async graphSpecs(): Promise<GraphSpecs | null> {
-    if (this.own === null) this.own = !!(await this.primary.graphSpecs?.().catch(() => null));
-    if (this.own) { this.graphInfo = this.primary.info; return this.primary.graphSpecs!(); }
-    const e = await this.second();
-    const specs = e?.graphSpecs ? await e.graphSpecs() : null;
-    this.graphInfo = specs && e ? e.info : undefined;
-    return specs;
-  }
-  async graph(request: GraphRequest): Promise<GraphResult> {
-    if (this.own) return this.primary.graph!(request);
-    const e = await this.second();
-    return e?.graph ? e.graph(request) : { error: { code: 'NO_GRAPH_ENGINE', message: 'graph backend unavailable' } };
-  }
-  dispose() { this.primary.dispose(); this.g?.then((e) => e?.dispose()); }
-}
-
 export function createEngine(cfg: EngineConfig): Engine {
-  cfg = { ...cfg, backend: canonicalBackend(cfg.backend) };
-  const fb = GRAPH_FALLBACK[cfg.backend];
-  if (fb && fb !== cfg.backend) return new GraphSplitEngine(createBase(cfg), () => createBase({ ...cfg, backend: fb }));
-  return createBase(cfg);
-}
-
-function createBase(cfg: EngineConfig): Engine {
-  const info = BACKENDS.find((b) => b.id === cfg.backend) ?? BACKENDS[0];
-  switch (info.id) {
-    case 'http': return new HttpEngine(info, cfg.httpUrl);
-    default: return new WorkerEngine(info, { kind: 'wasm', wasmUrl: cfg.wasmUrl });
-  }
+  return new WorkerEngine({ kind: 'wasm', wasmUrl: cfg.wasmUrl });
 }
 
 // ---- docs/23 engine batch + prices on top of rpcRaw ----

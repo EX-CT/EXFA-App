@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// Local engine bridge for the web UI's HTTP backend (zero dependencies).
-// Adds CORS + Private-Network-Access headers so the GitHub Pages site can call an engine on this machine.
+// Local RPC bridge for manual compatibility testing; it is not part of the App's WASM-only runtime.
+// Adds CORS + Private-Network-Access headers for a browser-based test harness calling an Engine on this machine.
 //   node tools/engine-bridge.mjs --upstream http://127.0.0.1:8080          # forward to an engine HTTP server (e.g. variant C serve-http)
 //   node tools/engine-bridge.mjs --stdio "eve-dogma --dataset D serve-stdio" # wrap any engine's JSONL RPC (contract `serve-stdio`)
-// Options: --port 8787 (default), --host 127.0.0.1. Then choose "HTTP" in the UI with URL http://127.0.0.1:8787
+// Options: --port 8787 (default), --host 127.0.0.1. The resulting endpoint is for external test harnesses.
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import readline from 'node:readline';

@@ -4,42 +4,40 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { BUILTIN_CHARACTERS, BUILTIN_DAMAGE, BUILTIN_TARGETS } from '../data/presets';
 import type { Library } from '../fit/model';
 import type { EngineConfig } from '../engine/adapter';
-import { canonicalBackend, DEFAULT_BACKEND } from '../engine/defaults';
 import { diffLibrary, LEGACY_KEY, openLibrary, storedPart, type LibraryBackend, type StoredLibrary } from './library';
 
 const KEY = LEGACY_KEY;
 
-export interface Settings { engine: EngineConfig; lang: 'en' | 'zh'; activeFitId: string | null }
+export interface Settings {
+  engine: EngineConfig;
+  lang: 'en' | 'zh';
+  activeFitId: string | null;
+  dockHeight: number;
+  dockCollapsed: boolean;
+  infoHeight: number;
+  infoCollapsed: boolean;
+}
 export interface AppState { lib: Library; settings: Settings }
 
 const base = import.meta.env.BASE_URL;
 
 export function defaultEngineConfig(): EngineConfig {
-  const q = new URLSearchParams(location.search);
   return {
-    backend: canonicalBackend(q.get('engine') ?? DEFAULT_BACKEND),
-    httpUrl: q.get('http') ?? 'http://127.0.0.1:8080',
     datasetUrl: new URL(`${base}data/dataset.json.gz`, location.href).href,
     wasmUrl: new URL(`${base}engines/f/exfa_wasm.wasm`, location.href).href,
   };
 }
 
-/** A saved backend that equals the default of the build that saved it was never chosen by the user: follow the current default. */
-function savedBackend(e: { backend?: string; default_at_save?: string } | undefined): string {
-  if (!e?.backend) return DEFAULT_BACKEND;
-  return e.backend === (e.default_at_save ?? 'ts-worker') ? DEFAULT_BACKEND : canonicalBackend(e.backend);
-}
-
 function initial(): AppState {
   const lib: Library = { fits: {}, characters: {}, damagePatterns: {}, targetProfiles: {}, folders: [] };
-  let settings: Settings = { engine: defaultEngineConfig(), lang: 'en', activeFitId: null };
+  let settings: Settings = {
+    engine: defaultEngineConfig(), lang: 'en', activeFitId: null,
+    dockHeight: 34, dockCollapsed: false, infoHeight: 190, infoCollapsed: false,
+  };
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) ?? 'null');
-    if (saved) settings = { ...settings, ...saved.settings, engine: { ...defaultEngineConfig(), backend: savedBackend(saved.settings?.engine), httpUrl: saved.settings?.engine?.httpUrl ?? settings.engine.httpUrl } };
+    if (saved) settings = { ...settings, ...saved.settings, engine: defaultEngineConfig() };
   } catch { /* ignore corrupt storage */ }
-  const q = new URLSearchParams(location.search);
-  if (q.get('engine')) settings.engine.backend = canonicalBackend(q.get('engine')!);
-  if (q.get('http')) settings.engine.httpUrl = q.get('http')!;
   for (const c of BUILTIN_CHARACTERS) lib.characters[c.id] = c;
   for (const d of BUILTIN_DAMAGE) lib.damagePatterns[d.id] = d;
   for (const t of BUILTIN_TARGETS) lib.targetProfiles[t.id] = t;
@@ -100,9 +98,7 @@ export function useAppState() {
   useEffect(() => {
     // not before the library is open: until then the key may still hold the legacy library to migrate
     if (status.kind === 'loading') return;
-    localStorage.setItem(KEY, JSON.stringify({
-      settings: { ...state.settings, engine: { backend: state.settings.engine.backend, default_at_save: DEFAULT_BACKEND, httpUrl: state.settings.engine.httpUrl } },
-    }));
+    localStorage.setItem(KEY, JSON.stringify({ settings: state.settings }));
   }, [state.settings, status.kind]);
   useEffect(() => {
     const onHide = () => { void flush(); };
