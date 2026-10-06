@@ -11,7 +11,17 @@ all computation runs locally in a Web Worker (Rust→WASM).
 
 * **Fitting, Pyfa-style**: market tree + search with EVE shorthand (`lse`, `dc ii`, `5mn mwd`),
   double-click or drag items onto the fitting canvas, right-click a module for its context menu
-  (variations, states, remove), drag charges onto a module to load them.
+  (variations, states, remove), drag charges onto a module to load them, drag modules to reorder
+  within a rack. Every item (modules, drones, fighters, implants, boosters, ship, market rows,
+  library entries) has a context menu — no browser native menu anywhere.
+* **Rich module rows**: per-module PG/CPU/cap use/cycle/range/tracking/DPS/price chips in aligned
+  columns, charge icons, overheat badges — and **link groups**: group identical modules into one
+  `×N` row and change the whole group's ammo/state/variation at once.
+* **Item info pane** (no popups): a fixed panel under the market tree shows quick stats, traits,
+  required skills, base-vs-modified attributes and one-click **variation swap** for fitted items;
+  clicking any fitted item also locates its group in the market tree.
+* **Edit-time state constraints**: passive modules only ever offer offline/online — the UI mirrors
+  the engine's `allowed_states` rule so illegal states can't even be requested.
 * **Everything computed by the engine**: offense/defense/capacitor/navigation/targeting stats,
   resource bars, drone bays, remote assistance, damage patterns and target profiles — with
   interactive graphs (DPS vs range, capacitor vs time, …) straight from the engine's graph RPC.
