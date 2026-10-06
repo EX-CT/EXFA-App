@@ -114,7 +114,9 @@ jobs:
             "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" "$DEFAULT_ENGINE" "${PRICES_SNAPSHOT:-}" > public/build-info.json
           cat public/build-info.json
       - run: npm run build
-        env: { BASE: /EXFA-App/, VITE_ESI_CLIENT_ID: ${{ vars.ESI_CLIENT_ID }} }
+        env:
+          BASE: /EXFA-App/
+          VITE_ESI_CLIENT_ID: ${{ vars.ESI_CLIENT_ID }}
       # SPA fallback so /esi/callback (and other client routes) load index.html on GitHub Pages
       - run: cp apps/web/dist/index.html apps/web/dist/404.html
       - name: Smoke test (headless Chrome computes the demo fit)
