@@ -3,7 +3,7 @@ import { loadSdePresets } from './data/sdePresets';
 import { setUiLang, t } from './i18n';
 import { Dataset } from './data/dataset';
 import { createEngine, enginePricesLoad, type Engine, type FitStats } from './engine/adapter';
-import { fetchLatestSnapshot, loadPriceSettings, savePriceSettings, type PriceSettings } from './data/prices';
+import { fetchLatestSnapshot, loadPriceSettings, savePriceSettings, PRICE_REFRESH_MS, SNAPSHOT_URL, type PriceSettings } from './data/prices';
 import { formatsRpc, importFit, initFormats } from './formats';
 import { defaultState } from './fit/states';
 import { newFit, toRequest, type Fit, type Library } from './fit/model';
@@ -76,6 +76,7 @@ export default function App() {
   const setPriceSet = useCallback((s: PriceSettings) => { savePriceSettings(s); setPriceSetState(s); }, []);
   const [snapState, setSnapState] = useState<SnapshotState>({ state: 'off' });
   const [pricesVer, setPricesVer] = useState(0);
+  const injectedSnapId = useRef<string | null>(null);
   const { lib, settings } = state;
   const fit = settings.activeFitId ? lib.fits[settings.activeFitId] ?? null : null;
 
@@ -190,22 +191,35 @@ export default function App() {
   }, [reqJson, engineReady, settings.activeFitId, pricesVer]);
 
   // "update prices": inject the latest EXFA-Data snapshot into the engine session (prices_load); off = the
-  // snapshot embedded in the engine
+  // snapshot embedded in the engine. While enabled the deployed snapshot is re-fetched hourly and re-injected
+  // when it changed; a failed re-poll keeps the previously injected snapshot.
   useEffect(() => {
     const eng = engineRef.current;
     if (!engineReady || !eng || !pricing) { setSnapState({ state: 'off' }); return; }
     let alive = true;
     if (!priceSet.update) {
       setSnapState({ state: 'off' });
+      injectedSnapId.current = null;
       enginePricesLoad(eng, null).then(() => alive && setPricesVer((v) => v + 1), () => {});
-    } else {
-      setSnapState({ state: 'loading' });
-      fetchLatestSnapshot().then(async (snap) => {
-        if (!(await enginePricesLoad(eng, snap.data))) throw new Error(t('this engine cannot load prices'));
-        if (alive) { setSnapState({ state: 'loaded', snap }); setPricesVer((v) => v + 1); }
-      }).catch((e) => alive && setSnapState({ state: 'error', error: (e as Error).message }));
+      return () => { alive = false; };
     }
-    return () => { alive = false; };
+    const pull = async (fresh: boolean) => {
+      try {
+        const snap = await fetchLatestSnapshot(SNAPSHOT_URL, fresh);
+        if (!alive) return;
+        const changed = snap.id !== injectedSnapId.current;
+        if (changed && !(await enginePricesLoad(eng, snap.data))) throw new Error(t('this engine cannot load prices'));
+        injectedSnapId.current = snap.id;
+        setSnapState({ state: 'loaded', snap, at: Date.now() });
+        if (changed) setPricesVer((v) => v + 1);
+      } catch (e) {
+        if (alive) setSnapState((s) => (s.state === 'loaded' ? { ...s, err: (e as Error).message } : { state: 'error', error: (e as Error).message }));
+      }
+    };
+    setSnapState((s) => (s.state === 'loaded' ? s : { state: 'loading' }));
+    pull(false);
+    const iv = setInterval(() => pull(true), PRICE_REFRESH_MS);
+    return () => { alive = false; clearInterval(iv); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engineReady, priceSet.update, pricing]);
 

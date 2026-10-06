@@ -200,6 +200,8 @@ export const ZH: Record<string, string> = {
   'target id must be a positive integer': '对象 ID 必须是正整数',
   'this engine cannot load prices': '此引擎无法加载价格',
   'types': '种物品',
+  'checked': '检查于',
+  'auto hourly': '每小时自动',
   'updated snapshot': '更新的快照',
   'value must be a number >= 0': '数值必须 ≥ 0',
   'Price snapshot for "update prices"': '“更新价格”使用的价格快照',

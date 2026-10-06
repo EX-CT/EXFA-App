@@ -16,7 +16,7 @@ const sourceLabel = (s: string) => t(SOURCE_LABEL[s.split(':')[0]] ?? s);
 const TARGET_LABEL: Record<OverrideTarget, string> = { type_id: 'Type', market_group_id: 'Market group', group_id: 'Group', category_id: 'Category' };
 const when = (iso?: string | null) => (iso ? new Date(iso).toLocaleString(undefined, { hour12: false, timeZoneName: 'short' }) : '—');
 
-export type SnapshotState = { state: 'off' } | { state: 'loading' } | { state: 'loaded'; snap: Snapshot } | { state: 'error'; error: string };
+export type SnapshotState = { state: 'off' } | { state: 'loading' } | { state: 'loaded'; snap: Snapshot; at?: number; err?: string } | { state: 'error'; error: string };
 
 interface Line { kind: string; index: number; type_id: number; name: string | null; quantity: number; unit_isk: number; total_isk: number; source: string; layer: string; multiplier?: number }
 
@@ -48,7 +48,7 @@ export function PriceBox({ ds, st, backend, settings, onSettings, snapshot }: {
       <label className="small"><input type="checkbox" className="price-update" checked={settings.update} onChange={(e) => onSettings({ ...settings, update: e.target.checked })} /> {t('Update prices (latest EXFA-Data snapshot)')}</label>
       <span className="muted small price-snapshot" data-state={snapshot.state}>{' '}
         {snapshot.state === 'loading' ? t('loading…') : snapshot.state === 'error' ? <span className="error">{snapshot.error}</span>
-          : snapshot.state === 'loaded' ? <>{snapshot.snap.id} · {snapshot.snap.types} {t('types')}</> : null}
+          : snapshot.state === 'loaded' ? <>{snapshot.snap.id} · {snapshot.snap.types} {t('types')} · {when(snapshot.snap.market_time)}{snapshot.at ? ` · ${t('checked')} ${new Date(snapshot.at).toLocaleTimeString(undefined, { hour12: false })}` : ''} · {t('auto hourly')}{snapshot.err ? <span className="error"> · {snapshot.err}</span> : null}</> : null}
         {' '}<a href={SNAPSHOT_RELEASES}>{t('releases')}</a></span>
       {prov && <div className="muted small price-prov" data-source={prov.price_source ?? ''}>
         {t('Price source')}: {prov.price_source ? sourceLabel(prov.price_source) : '—'}{prov.price_snapshot_id ? ` · ${prov.price_snapshot_id}` : ''} · {when(prov.snapshot_time)}

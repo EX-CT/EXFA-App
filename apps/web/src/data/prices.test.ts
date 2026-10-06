@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { loadPriceSettings, overrideProblem, parseSnapshot, PRICE_SETTINGS_KEY, savePriceSettings, setTypePrice } from './prices';
+import { describe, expect, it, vi, afterEach } from 'vitest';
+import { fetchLatestSnapshot, loadPriceSettings, overrideProblem, parseSnapshot, PRICE_SETTINGS_KEY, savePriceSettings, setTypePrice } from './prices';
 
 const mem = () => { const m = new Map<string, string>(); return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v), m }; };
 const gzip = async (s: string) => new Uint8Array(await new Response(new Blob([s]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer());
@@ -40,4 +40,22 @@ describe('price snapshot', () => {
     await expect(parseSnapshot(new TextEncoder().encode(JSON.stringify({ ...snap, schema_version: 2 })))).rejects.toThrow(/v1/);
     await expect(parseSnapshot(new TextEncoder().encode(JSON.stringify({ isk: {} })))).rejects.toThrow(/v1/);
   });
+  it('web.unit.price-snapshot-fetch: default call memoizes; fresh=true re-fetches with a cache buster', async () => {
+    const body = JSON.stringify(snap);
+    const calls: string[] = [];
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (u) => {
+      calls.push(String(u));
+      return new Response(body, { status: 200 });
+    });
+    const u1 = 'https://t/one.json.gz';
+    await fetchLatestSnapshot(u1);
+    await fetchLatestSnapshot(u1);
+    expect(calls).toEqual([u1]);
+    await fetchLatestSnapshot(u1, true);
+    await fetchLatestSnapshot(u1, true);
+    expect(calls.length).toBe(3);
+    expect(calls[1]).toMatch(/^https:\/\/t\/one\.json\.gz\?t=\d+$/);
+    spy.mockRestore();
+  });
+  afterEach(() => vi.restoreAllMocks());
 });

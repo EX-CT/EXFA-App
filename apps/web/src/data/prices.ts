@@ -53,9 +53,11 @@ export function setTypePrice(s: PriceSettings, typeId: number, price: number | n
 // ---- latest EXFA-Data snapshot (eve-price-snapshot v1, gzip JSON) ----
 
 /** Deployed with the site by CI from the latest https://github.com/EX-CT/EXFA-Data release (release assets
- *  are not CORS-readable from a browser, so the site serves its own copy, refreshed by a daily rebuild). */
+ *  are not CORS-readable from a browser, so the site serves its own copy, refreshed by an hourly rebuild). */
 export const SNAPSHOT_URL = `${import.meta.env?.BASE_URL ?? '/'}prices/latest.json.gz`;
 export const SNAPSHOT_RELEASES = 'https://github.com/EX-CT/EXFA-Data/releases';
+/** While "update prices" is on the client re-polls SNAPSHOT_URL on this interval. */
+export const PRICE_REFRESH_MS = 60 * 60 * 1000;
 
 export interface Snapshot { data: Record<string, any>; id: string; market_time: string; types: number }
 
@@ -72,11 +74,18 @@ export async function parseSnapshot(bytes: Uint8Array): Promise<Snapshot> {
   return { data, id: String(data.snapshot_id ?? ''), market_time: String(data.market_time ?? ''), types: Object.keys(data.types).length };
 }
 
-let cache: Promise<Snapshot> | null = null;
-export function fetchLatestSnapshot(url = SNAPSHOT_URL): Promise<Snapshot> {
-  return (cache ??= (async () => {
-    const r = await fetch(url, { cache: 'no-cache' });
+let cache: { url: string; p: Promise<Snapshot> } | null = null;
+/** Fetch the deployed snapshot; `fresh` bypasses the module cache (hourly re-poll, manual refresh). */
+export function fetchLatestSnapshot(url = SNAPSHOT_URL, fresh = false): Promise<Snapshot> {
+  const load = async () => {
+    const u = fresh ? `${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}` : url;
+    const r = await fetch(u, { cache: 'no-cache' });
     if (!r.ok) throw new Error(`price snapshot: HTTP ${r.status}`);
     return parseSnapshot(new Uint8Array(await r.arrayBuffer()));
-  })().catch((e) => { cache = null; throw e; }));
+  };
+  if (fresh) return load();
+  if (cache?.url === url) return cache.p;
+  const p = load();
+  cache = { url, p };
+  return p.catch((e) => { if (cache?.p === p) cache = null; throw e; });
 }

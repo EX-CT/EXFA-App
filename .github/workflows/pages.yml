@@ -20,7 +20,8 @@ on:
         required: false
         default: ""
   schedule:
-    - cron: "40 */6 * * *"   # pick up new EXFA-Data / EXFA-Engine releases
+    - cron: "40 * * * *"   # hourly: the web client re-polls its deployed prices/latest.json.gz every
+    # hour, so a new EXFA-Data prices-* release reaches connected clients within ~2h of publication
 permissions:
   contents: read
   pages: write
