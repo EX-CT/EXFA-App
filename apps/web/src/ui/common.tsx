@@ -2,10 +2,13 @@ import type { ReactNode } from 'react';
 import { t } from '../i18n';
 
 /** Item icon from CCP's image CDN (images.evetech.net, no auth). Ships/structures get the
- * 3D render endpoint, everything else the icon endpoint. Lazy-loaded; hidden on 404. */
+ * 3D render endpoint, everything else the icon endpoint. The API only serves the fixed
+ * sizes 32/64/128/256/512 (anything else is HTTP 400), so we request the smallest size
+ * that covers `size` and let CSS scale it down. Lazy-loaded; hidden on 404. */
+const iconSize = (size: number) => (size <= 32 ? 32 : size <= 64 ? 64 : size <= 128 ? 128 : size <= 256 ? 256 : 512);
 export function TypeIcon({ id, size = 32, render = false }: { id: number; size?: number; render?: boolean }) {
   return <img className="typeicon" width={size} height={size} loading="lazy" alt="" draggable={false}
-    src={`https://images.evetech.net/types/${id}/${render ? 'render' : 'icon'}?size=${size}`}
+    src={`https://images.evetech.net/types/${id}/${render ? 'render' : 'icon'}?size=${iconSize(size)}`}
     onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = 'hidden'; }} />;
 }
 
