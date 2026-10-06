@@ -40,6 +40,14 @@ function hintFor(code: string, name?: string, slot?: string | null, skill?: stri
       return `${name ?? "module"} cannot be fitted to this hull; search_types with fits_ship lists modules that can`;
     case "DRONE_BANDWIDTH":
       return "lower the active drone count or use smaller drones";
+    case "DRONE_BAY":
+      return "remove drones or use smaller drones to fit the drone bay";
+    case "FIGHTER_TUBES":
+      return "fit fewer fighter squadrons to stay within the hull's fighter tubes";
+    case "FIGHTER_BAY":
+      return "remove fighter squadrons or use smaller fighters to fit the fighter bay";
+    case "CARGO_OVERLOAD":
+      return "remove cargo or reduce quantities to fit the cargo hold";
     case "MISSING_SKILL":
       return skill ? `train ${skill}${level ? ` to ${level}` : ""} (skill_requirements lists the whole plan)` : "skill_requirements lists what to train";
     case "MAX_GROUP_FITTED":

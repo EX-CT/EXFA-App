@@ -83,7 +83,7 @@ describe("engine stats through compute_fit (Pyfa values)", { skip: !haveEngine &
   });
 
   test("mcp.stats.illegal-fit-computed: a fit with violations is still computed in full (Pyfa 'disable fitting restrictions'; bench exct_rifter)", () => {
-    assert.deepEqual(sum.validation, { validated: true, valid: false, codes: ["CALIBRATION_OVERLOAD", "CPU_OVERLOAD", "DRONE_BANDWIDTH", "SLOTS_EXCEEDED"] });
+    assert.deepEqual(sum.validation, { validated: true, valid: false, codes: ["CALIBRATION_OVERLOAD", "CPU_OVERLOAD", "DRONE_BANDWIDTH", "DRONE_BAY", "SLOTS_EXCEEDED"] });
     near(full.offense.total.weapon_dps, 243.12956327613847, "weapon_dps");
     near(full.offense.total.drone_dps, 32.175, "drone_dps");
     near(full.resources.cpu.used, 190, "cpu_used");

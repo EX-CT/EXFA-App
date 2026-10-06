@@ -869,7 +869,7 @@ export function createServer(ctx: ServerDeps): McpServer {
       inputSchema: {
         ...fitInputShape,
         graph: z.string().nullish().describe("graph name from list_graphs, e.g. damage, capacitor, mobility (required)"),
-        x_axis: z.string().optional().describe("x axis (default: the graph's first axis valid for every requested y)"),
+        x_axis: z.string().optional().describe("x axis (default: the first preferred axis valid for every requested y)"),
         x: z
           // values are checked in the handler so a bad value is a BAD_REQUEST tool error, not a protocol error
           .object({ values: z.array(z.any()).max(500).optional(), from: z.number().optional(), to: z.number().optional(), points: z.number().int().min(2).max(500).optional() })

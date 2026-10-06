@@ -18,6 +18,7 @@ export interface GraphSpecs {
 
 /** Graphs that take a `target` (profile or fit), per CONTRACT-GRAPHS 0.2; the others ignore it. */
 export const TARGET_GRAPHS = new Set(["damage", "application_profile", "ewar", "remote_reps"]);
+const AXIS_PREFERENCE = ["distance_m", "time_s", "tgt_sig_m"];
 
 /** Default sample ranges per x axis when the caller gives none (SI units, as in the contract). */
 export const DEFAULT_RANGES: Record<string, [number, number]> = {
@@ -89,12 +90,13 @@ export function sampleX(graph: string, axis: string, x: XSpec | undefined): numb
   return out;
 }
 
-/** Pick the x axis (given, else the first axis every requested y is defined on) and the y list (given, else all). */
+/** Pick the x axis (given, else the first preferred axis every requested y is defined on) and the y list (given, else all). */
 export function pickAxes(spec: GraphSpec, graph: string, axis?: string, y?: string[]): { axis: string; y: string[] } {
   const axes = Object.keys(spec.axes ?? {});
   const series = spec.series ?? {};
   if (axis && !axes.includes(axis)) throw new EngineError("BAD_AXIS", `graph ${graph} has no x axis '${axis}' (axes: ${axes.join(", ")})`, "x.axis");
-  const ax = axis ?? axes.find((a) => (y?.length ? y : Object.keys(series)).every((s) => series[s]?.by_axis?.[a] !== undefined)) ?? axes[0];
+  const candidates = [...AXIS_PREFERENCE.filter((a) => axes.includes(a)), ...axes.filter((a) => !AXIS_PREFERENCE.includes(a))];
+  const ax = axis ?? candidates.find((a) => (y?.length ? y : Object.keys(series)).every((s) => series[s]?.by_axis?.[a] !== undefined)) ?? axes[0];
   // an explicit y list goes to the engine as given (an empty one is the engine's BAD_REQUEST); omitted = every series
   const ys = y ?? Object.keys(series).filter((s) => series[s]?.by_axis?.[ax] !== undefined);
   return { axis: ax, y: ys };
