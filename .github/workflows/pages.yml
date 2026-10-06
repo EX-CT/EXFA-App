@@ -82,9 +82,11 @@ jobs:
           ETAG="${{ github.event.inputs.engine_tag }}"
           [ -z "$ETAG" ] && ETAG=$(gh release view -R EX-CT/EXFA-Engine --json tagName --jq .tagName)
           mkdir -p public/engines/f dle
-          gh release download "$ETAG" -R EX-CT/EXFA-Engine -D dle -p exfa-wasm32-wasip1.wasm -p exfa_formats_wasm.wasm -p "exfa-${ETAG}-linux-x86_64.tar.gz" -p SHA256SUMS
+          # exfa_wasm.wasm is the wasm32-unknown-unknown (freestanding, C-ABI) module the browser
+          # worker loads — NOT exfa-wasm32-wasip1.wasm, which needs WASI imports browsers can't provide
+          gh release download "$ETAG" -R EX-CT/EXFA-Engine -D dle -p exfa_wasm.wasm -p exfa_formats_wasm.wasm -p "exfa-${ETAG}-linux-x86_64.tar.gz" -p SHA256SUMS
           (cd dle && sha256sum -c --ignore-missing SHA256SUMS)
-          cp dle/exfa-wasm32-wasip1.wasm public/engines/f/exfa_wasm.wasm
+          cp dle/exfa_wasm.wasm public/engines/f/exfa_wasm.wasm
           cp dle/exfa_formats_wasm.wasm public/engines/f/exfa_formats_wasm.wasm
           for w in exfa_wasm.wasm exfa_formats_wasm.wasm; do test -s "public/engines/f/$w" || { echo "engine module $w missing"; exit 1; }; done
           # native exfa binary for the http-backend e2e (tools/engine-bridge.mjs); not deployed
