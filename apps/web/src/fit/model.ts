@@ -4,7 +4,9 @@ import { defaultState } from './states';
 
 export type ModState = 'offline' | 'online' | 'active' | 'overheated';
 export interface Mutation { base_type_id: number; mutaplasmid_type_id: number; attributes: Record<string, number> }
-export interface FitModule { type_id: number; slot: Slot; state: ModState; charge_type_id?: number | null; mutation?: Mutation | null; spool?: number | null }
+export interface FitModule { type_id: number; slot: Slot; state: ModState; charge_type_id?: number | null; mutation?: Mutation | null; spool?: number | null;
+  /** Pyfa "group modules": members sharing a group id render as one stacked row and are edited together. */
+  group?: number | null }
 export interface FitDrone { type_id: number; quantity: number; active: number; mutation?: Mutation | null }
 export interface FitFighter { type_id: number; quantity: number; active: boolean; abilities?: number[] | null }
 export interface FitBooster { type_id: number; side_effects?: number[] }

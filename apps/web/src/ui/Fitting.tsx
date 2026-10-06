@@ -32,8 +32,8 @@ const dropProps = (fit: Fit, slot: Slot, to: number | null, onChange: (f: Fit) =
 });
 
 /** Right-click context menu on a module row (Pyfa context menu): variation swap, state, info, remove. */
-function CtxMenu({ x, y, ds, m, vars, onInfo, onChange, onRemove, onClose }: {
-  x: number; y: number; ds: Dataset; m: FitModule; vars: number[];
+function CtxMenu({ x, y, ds, m, vars, nIdentical, grouped, onGroup, onInfo, onChange, onRemove, onClose }: {
+  x: number; y: number; ds: Dataset; m: FitModule; vars: number[]; nIdentical?: number; grouped?: boolean; onGroup?: () => void;
   onInfo: (id: number, ctx?: InfoCtx) => void; onChange: (p: Partial<FitModule>) => void; onRemove: () => void; onClose: () => void;
 }) {
   useEffect(() => {
@@ -45,6 +45,8 @@ function CtxMenu({ x, y, ds, m, vars, onInfo, onChange, onRemove, onClose }: {
     <div className="ctxmenu" style={{ left: x, top: y }} onClick={(e) => e.stopPropagation()} onContextMenu={(e) => e.preventDefault()}>
       <div className="ctxhead">{ds.name(m.type_id)}</div>
       <button onClick={() => { onInfo(m.type_id); onClose(); }}>{t('Show info')}</button>
+      {(nIdentical ?? 0) > 1 && <button onClick={() => { onGroup!(); onClose(); }}>⛓ {t('Group identical modules')} (×{nIdentical})</button>}
+      {grouped && <button onClick={() => { onChange({ group: null }); onClose(); }}>⛓ {t('Ungroup')}</button>}
       {vars.length > 1 && (
         <div className="ctxgroup">
           <div className="ctxlabel">{t('Variations')}</div>
@@ -60,12 +62,18 @@ function CtxMenu({ x, y, ds, m, vars, onInfo, onChange, onRemove, onClose }: {
   );
 }
 
-function ModuleRow({ ds, m, idx, fit, stats, onChange, onInfo, menu, setMenu }: { ds: Dataset; m: FitModule; idx: number; menu: { i: number; x: number; y: number } | null; setMenu: (v: { i: number; x: number; y: number } | null) => void } & FitProps) {
+function ModuleRow({ ds, m, idx, grp, fit, stats, onChange, onInfo, menu, setMenu }: { ds: Dataset; m: FitModule; idx: number; grp?: number[]; menu: { i: number; x: number; y: number } | null; setMenu: (v: { i: number; x: number; y: number } | null) => void } & FitProps) {
   const charges = ds.chargesFor(m.type_id);
   const mutas = ds.mutaplasmidsFor(m.mutation?.base_type_id ?? m.type_id);
   const [showMuta, setShowMuta] = useState(false);
-  const set = (patch: Partial<FitModule>) => onChange({ ...fit, modules: fit.modules.map((x, i) => (i === idx ? { ...x, ...patch } : x)) });
-  const remove = () => onChange({ ...fit, modules: fit.modules.filter((_, i) => i !== idx) });
+  const targets = grp ?? [idx];
+  const set = (patch: Partial<FitModule>) => onChange({ ...fit, modules: fit.modules.map((x, i) => (targets.includes(i) ? { ...x, ...patch } : x)) });
+  const remove = () => onChange({ ...fit, modules: fit.modules.filter((_, i) => !targets.includes(i)) });
+  const nIdentical = grp ? 0 : fit.modules.reduce((n, x) => n + (x.slot === m.slot && x.type_id === m.type_id && x.group == null ? 1 : 0), 0);
+  const groupIdentical = () => {
+    const gid = 1 + fit.modules.reduce((mx, x) => Math.max(mx, x.group ?? 0), 0);
+    onChange({ ...fit, modules: fit.modules.map((x) => (x.slot === m.slot && x.type_id === m.type_id && x.group == null ? { ...x, group: gid } : x)) });
+  };
   const cycle = (dir: number) => {
     const allowed = ds.slot(m.type_id) === 'rig' || ds.slot(m.type_id) === 'subsystem' ? ['offline', 'online'] as ModState[] : STATES;
     const i = allowed.indexOf(m.state);
@@ -74,6 +82,8 @@ function ModuleRow({ ds, m, idx, fit, stats, onChange, onInfo, menu, setMenu }: 
   const wpn = stats?.offense?.weapons?.find((w: any) => w.module_index === idx);
   const modStats = stats?.modules?.find((x: any) => x.module_index === idx);
   const priceRow = stats?.price?.sections?.modules?.items?.find((x: any) => x.index === idx);
+  const dpsTotal = grp ? grp.reduce((s, i) => s + (stats?.offense?.weapons?.find((w: any) => w.module_index === i)?.dps?.total ?? 0), 0) : wpn?.dps?.total;
+  const iskTotal = grp ? grp.reduce((s, i) => s + (stats?.price?.sections?.modules?.items?.find((x: any) => x.index === i)?.unit_isk ?? 0), 0) : priceRow?.unit_isk;
   const sigRad = ds.attr(m.type_id, 'optimalSigRadius');
   const trackNorm = wpn?.tracking && sigRad ? (wpn.tracking * 40000) / sigRad : null;
   const baseRangeM = !wpn ? (ds.attr(m.type_id, 'maxRange') ?? null) : null;
@@ -93,10 +103,11 @@ function ModuleRow({ ds, m, idx, fit, stats, onChange, onInfo, menu, setMenu }: 
         if (id != null && ds.kind(id) === 'charge' && ds.chargesFor(m.type_id).includes(id)) { e.preventDefault(); e.stopPropagation(); set({ charge_type_id: id }); draggedType.id = null; return; }
         if (dragFrom != null) { e.preventDefault(); onChange(moveModule(fit, dragFrom, idx)); dragFrom = null; }
       }}>
-      {menu?.i === idx && <CtxMenu x={menu.x} y={menu.y} ds={ds} m={m} vars={ds.variations(m.type_id)} onInfo={onInfo} onChange={set} onRemove={remove} onClose={() => setMenu(null)} />}
+      {menu?.i === idx && <CtxMenu x={menu.x} y={menu.y} ds={ds} m={m} vars={ds.variations(m.type_id)} nIdentical={nIdentical} grouped={!!grp} onGroup={groupIdentical} onInfo={onInfo} onChange={set} onRemove={remove} onClose={() => setMenu(null)} />}
       <button className={'state s-' + m.state} onClick={() => cycle(1)} title={`${t(m.state)} (${t('click: next state')})`}>{STATE_ICON[m.state]}</button>
       <TypeIcon id={m.mutation?.base_type_id ?? m.type_id} size={18} />
-      <span className="mname" onClick={() => onInfo(m.type_id, { module: idx })}>{ds.name(m.type_id)}{m.mutation ? ' ✦' : ''}</span>
+      <span className="mname" onClick={() => onInfo(m.type_id, { module: idx })}>{grp && <b className="gcount" title={t('grouped modules')}>×{grp.length} </b>}{ds.name(m.type_id)}{m.mutation ? ' ✦' : ''}</span>
+      {m.charge_type_id ? <TypeIcon id={m.charge_type_id} size={18} /> : null}
       {charges.length > 0 && (
         <select value={m.charge_type_id ?? ''} onChange={(e) => set({ charge_type_id: e.target.value ? +e.target.value : null })}>
           <option value="">{t('— no charge —')}</option>
@@ -119,8 +130,8 @@ function ModuleRow({ ds, m, idx, fit, stats, onChange, onInfo, menu, setMenu }: 
         {wpn?.optimal_m != null && <span className="mc" title={t('optimal + falloff')}>{fmt(wpn.optimal_m / 1000, 1) + (wpn.falloff_m ? '+' + fmt(wpn.falloff_m / 1000, 1) : '') + ' km'}</span>}
         {baseRangeM ? <span className="mc dim" title={t('max range (base attribute)')}>{fmt(baseRangeM / 1000, 1) + ' km'}</span> : null}
         {trackNorm != null && <span className="mc" title={t('tracking (normalized)')}>{fmt(trackNorm, 0)}</span>}
-        {wpn?.dps?.total != null && <span className="mc dps" title={t('damage per second')}>{wpn.dps.total.toFixed(1) + ' dps'}</span>}
-        {priceRow && <span className="mc" title={t('market price (Jita)')}>{fmt(priceRow.unit_isk, 0) + ' ISK'}</span>}
+        {dpsTotal != null && dpsTotal > 0 && <span className="mc dps" title={t('damage per second')}>{dpsTotal.toFixed(1) + ' dps'}</span>}
+        {iskTotal != null && iskTotal > 0 && <span className="mc" title={t('market price (Jita)')}>{fmt(iskTotal, 0) + ' ISK'}</span>}
       </span>
       <button className="mini rm" onClick={remove} title={t('Remove')}>✕</button>
       {showMuta && (
@@ -355,7 +366,18 @@ export function Fitting(p: FitProps & { addProjected: boolean; setAddProjected: 
             return (
               <div className="slotgroup" key={s}>
                 <h4>{t(label)} <span className="muted">{mods.length}/{total}</span></h4>
-                {mods.map(([m, i]) => <ModuleRow key={i} {...p} m={m} idx={i} menu={menu} setMenu={setMenu} />)}
+                {(() => {
+                  const seenGroups = new Set<number>();
+                  return mods.map(([m, i]) => {
+                    if (m.group != null) {
+                      if (seenGroups.has(m.group)) return null;
+                      seenGroups.add(m.group);
+                      const members = mods.filter(([x]) => x.group === m.group).map(([, j]) => j);
+                      return <ModuleRow key={'g' + m.group} {...p} m={m} idx={i} grp={members} menu={menu} setMenu={setMenu} />;
+                    }
+                    return <ModuleRow key={i} {...p} m={m} idx={i} menu={menu} setMenu={setMenu} />;
+                  });
+                })()}
                 {Array.from({ length: Math.max(0, total - mods.length) }, (_, i) => <div key={'e' + i} className="mod empty" {...dropProps(fit, s, null, onChange)}>{t(`[empty ${s} slot]`)}</div>)}
               </div>
             );

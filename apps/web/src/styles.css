@@ -36,6 +36,7 @@ ul.fits li { padding: 4px; border-bottom: 1px solid var(--line); cursor: pointer
 .mod.empty { color: #55606b; font-style: italic; } .mod.bad { background: #3a1f22; }
 .mod .mname { flex: 0 0 250px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; } .mod .mname:hover { color: var(--acc); }
 .mod .rm { margin-left: auto; }
+.mod .gcount { color: var(--acc); font-weight: 600; }
 .mod select { max-width: 230px; }
 .mstat { color: var(--mut); font-size: 11px; min-width: 70px; text-align: right; }
 .state { width: 26px; padding: 0; } .s-offline { color: #666; } .s-online { color: #aaa; } .s-active { color: var(--ok); } .s-overheated { color: #ff8a65; }
