@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { t } from '../i18n';
 import type { Dataset } from '../data/dataset';
 import { uid, type Character, type Fit, type Library } from '../fit/model';
+import { esiClientId, importEsiCharacter, loadEsiCharacters, login, setEsiClientId, unlinkEsiCharacter } from '../esi/client';
 
 export function requiredSkills(ds: Dataset, fit: Fit): Map<number, number> {
   const out = new Map<number, number>();
@@ -17,7 +18,7 @@ export function requiredSkills(ds: Dataset, fit: Fit): Map<number, number> {
   return out;
 }
 
-export function CharacterEditor({ ds, lib, fit, onLib }: { ds: Dataset; lib: Library; fit: Fit | null; onLib: (l: Library) => void }) {
+export function CharacterEditor({ ds, lib, fit, onLib, onFit }: { ds: Dataset; lib: Library; fit: Fit | null; onLib: (l: Library) => void; onFit?: (f: Fit) => void }) {
   const [sel, setSel] = useState(fit?.character_id ?? 'all5');
   const [q, setQ] = useState('');
   const ch = lib.characters[sel] ?? lib.characters['all5'];
@@ -48,6 +49,7 @@ export function CharacterEditor({ ds, lib, fit, onLib }: { ds: Dataset; lib: Lib
           <label title={t('Alpha clone: engine caps skills at their Alpha level')}><input type="checkbox" checked={ch.alpha_clone === true} onChange={(e) => save({ ...ch, alpha_clone: e.target.checked })} /> {t('alpha clone')}</label>
         </div>
       )}
+      <EsiPanel ds={ds} lib={lib} fit={fit} onLib={onLib} onFit={onFit} onSel={setSel} />
       {fit && (
         <div className={missing.length ? 'warnbox' : 'okbox'}>
           {missing.length ? <>{t('Missing for this fit')} ({missing.length}): {missing.map(([s, l]) => `${ds.name(s)} ${l} (${t('have')} ${level(s)})`).join(', ')}
@@ -73,5 +75,55 @@ export function CharacterEditor({ ds, lib, fit, onLib }: { ds: Dataset; lib: Lib
         })}
       </div>
     </div>
+  );
+}
+
+/** ESI single sign-on panel: link characters, import their trained skills / implants into a local Character. */
+function EsiPanel({ ds, lib, fit, onLib, onFit, onSel }: { ds: Dataset; lib: Library; fit: Fit | null; onLib: (l: Library) => void; onFit?: (f: Fit) => void; onSel: (id: string) => void }) {
+  const [, bump] = useState(0);
+  const [busy, setBusy] = useState<number | null>(null);
+  const [err, setErr] = useState('');
+  const [cid, setCid] = useState(esiClientId());
+  const chars = Object.values(loadEsiCharacters());
+  const doImport = async (id: number) => {
+    setBusy(id); setErr('');
+    try {
+      const ec = await importEsiCharacter(loadEsiCharacters()[id]);
+      const existing = Object.values(lib.characters).find((c) => c.name === ec.character_name && !c.builtin);
+      const c: Character = {
+        ...(existing ?? { id: uid(), default_level: 0 }),
+        name: ec.character_name, builtin: false,
+        levels: { ...Object.fromEntries(ds.skills.map((s) => [s, 0])), ...ec.skills },
+      };
+      delete c.levels['0'];
+      onLib({ ...lib, characters: { ...lib.characters, [c.id]: c } });
+      onSel(c.id);
+      // Pyfa: importing a character also plugs its implants into the current fit
+      if (fit && onFit && ec.implants?.length) onFit({ ...fit, implants: ec.implants, character_id: c.id });
+    } catch (e) { setErr(String(e)); }
+    setBusy(null); bump((n) => n + 1);
+  };
+  return (
+    <details className="esipanel">
+      <summary>{t('ESI (log in with EVE Online)')} <span className="muted">{chars.length ? `${chars.length} ${t('linked')}` : ''}</span></summary>
+      {!esiClientId() && (
+        <div className="row">
+          <label className="grow">{t('ESI client_id')} <input value={cid} placeholder={t('developers.eveonline.com app')} onChange={(e) => setCid(e.target.value)} onBlur={() => setEsiClientId(cid)} /></label>
+        </div>
+      )}
+      <div className="row">
+        <button disabled={!esiClientId()} onClick={() => login().catch((e) => setErr(String(e)))}>{t('Log in with EVE Online')}</button>
+        {err && <span className="error">{err}</span>}
+      </div>
+      {chars.map((ec) => (
+        <div className="row esichar" key={ec.character_id}>
+          <b>{ec.character_name}</b>
+          {ec.imported_at && <span className="muted small">{Object.keys(ec.skills ?? {}).length} {t('skills')} · {ec.implants?.length ?? 0} {t('implants')} · {new Date(ec.imported_at).toLocaleString(undefined, { hour12: false })}</span>}
+          <button disabled={busy === ec.character_id} onClick={() => doImport(ec.character_id)}>{busy === ec.character_id ? t('importing…') : t('Import skills / implants')}</button>
+          <button className="danger" onClick={() => { unlinkEsiCharacter(ec.character_id); bump((n) => n + 1); }}>{t('Unlink')}</button>
+        </div>
+      ))}
+      <p className="muted small">{t('ESI grants read access to your character sheet (skills, implants). Tokens are stored only in this browser.')}</p>
+    </details>
   );
 }
