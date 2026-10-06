@@ -52,25 +52,29 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: "22", cache: npm }
-      - name: Dataset from the latest EXFA-Data sde release
-        run: |
-          TAG=$(gh release view -R EX-CT/EXFA-Data --json tagName --jq .tagName)
-          gh release download "$TAG" -R EX-CT/EXFA-Data -D "$RUNNER_TEMP/data" -p 'dataset-*.json.gz'
-          echo "EXFA_DATASET=$(ls "$RUNNER_TEMP"/data/dataset-*.json.gz)" >> "$GITHUB_ENV"
-          echo "dataset: $TAG" >> "$GITHUB_STEP_SUMMARY"
-      - name: Pyfa presets (GPL oracle data for built-in profile cases; regenerated with renamed-item conversions — EXFA-Bench presets-pyfa-3569502-r6)
-        run: |
-          gh release download presets-pyfa-3569502-r6 -R EX-CT/EXFA-Bench -D "$RUNNER_TEMP/data" -p 'presets-pyfa-*'
-          echo "EXFA_PYFA_DATA=$(ls "$RUNNER_TEMP"/data/presets-pyfa-*.json | head -1)" >> "$GITHUB_ENV"
       - name: Engine from the latest EXFA-Engine release
         run: |
           ETAG=$(gh release view -R EX-CT/EXFA-Engine --json tagName --jq .tagName)
-          gh release download "$ETAG" -R EX-CT/EXFA-Engine -D "$RUNNER_TEMP/engine" -p "exfa-${ETAG}-linux-x86_64.tar.gz"
+          gh release download "$ETAG" -R EX-CT/EXFA-Engine -D "$RUNNER_TEMP/engine" -p "exfa-${ETAG}-linux-x86_64.tar.gz" -p release.json
           tar xzf "$RUNNER_TEMP/engine/exfa-${ETAG}-linux-x86_64.tar.gz" -C "$RUNNER_TEMP/engine"
           EXFA_BIN=$(find "$RUNNER_TEMP/engine" -name exfa -type f | head -1)
           test -x "$EXFA_BIN" || chmod +x "$EXFA_BIN"
           echo "EXFA_ENGINE_BIN=$EXFA_BIN" >> "$GITHUB_ENV"
-          echo "engine: $ETAG ($EXFA_BIN)" >> "$GITHUB_STEP_SUMMARY"
+          # the released binary compiles its dataset in: tests pairing engine_info/dataset_match need the
+          # exact SDE release it was built against (release.json sde_tag), not the newest dataset release
+          TAG=$(jq -r '.sde_tag // empty' "$RUNNER_TEMP/engine/release.json")
+          test -n "$TAG" || TAG=$(gh release view -R EX-CT/EXFA-Data --json tagName --jq .tagName)
+          echo "SDE_TAG=$TAG" >> "$GITHUB_ENV"
+          echo "engine: $ETAG ($EXFA_BIN), dataset: $TAG" >> "$GITHUB_STEP_SUMMARY"
+      - name: Dataset matching the engine's compiled-in SDE (release.json sde_tag)
+        run: |
+          gh release download "$SDE_TAG" -R EX-CT/EXFA-Data -D "$RUNNER_TEMP/data" -p 'dataset-*.json.gz'
+          echo "EXFA_DATASET=$(ls "$RUNNER_TEMP"/data/dataset-*.json.gz)" >> "$GITHUB_ENV"
+          echo "dataset: $SDE_TAG" >> "$GITHUB_STEP_SUMMARY"
+      - name: Pyfa presets (GPL oracle data for built-in profile cases; regenerated with renamed-item conversions — EXFA-Bench presets-pyfa-3569502-r6)
+        run: |
+          gh release download presets-pyfa-3569502-r6 -R EX-CT/EXFA-Bench -D "$RUNNER_TEMP/data" -p 'presets-pyfa-*'
+          echo "EXFA_PYFA_DATA=$(ls "$RUNNER_TEMP"/data/presets-pyfa-*.json | head -1)" >> "$GITHUB_ENV"
       - run: npm ci
       - name: npm test (unit + integration on exfa; engine suites must run, none may skip)
         working-directory: packages/mcp
