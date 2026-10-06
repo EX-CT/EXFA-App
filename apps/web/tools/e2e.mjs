@@ -151,8 +151,8 @@ check('web.e2e.undo-redo: undo / redo', aU === a0 && s.defense?.hp?.armor < a0, 
 
 // show info on a fitted module -> engine-computed fitted values
 await p.evaluate(() => [...document.querySelectorAll('.mod .mname')].find((e) => e.textContent.startsWith('Heavy Neutron Blaster II')).click());
-await p.waitForFunction(() => document.querySelector('.dialog table.attrs thead') || document.querySelector('.dialog')?.textContent.includes('unavailable') || document.querySelector('.dialog')?.textContent.includes('did not return'), { timeout: 30000 });
-const fi = await p.evaluate(() => ({ head: !!document.querySelector('.dialog table.attrs thead'), changed: document.querySelectorAll('.dialog tr.changed').length, note: document.querySelector('.dialog p.muted')?.textContent }));
+await p.waitForFunction(() => document.querySelector('.infopane table.attrs thead') || document.querySelector('.infopane')?.textContent.includes('unavailable') || document.querySelector('.infopane')?.textContent.includes('did not return'), { timeout: 30000 });
+const fi = await p.evaluate(() => ({ head: !!document.querySelector('.infopane table.attrs thead'), changed: document.querySelectorAll('.infopane tr.changed').length, note: document.querySelector('.infopane p.muted')?.textContent }));
 check('web.e2e.show-info-fitted-values: show info: fitted attribute values', fi.head && fi.changed > 0, `${fi.changed} changed; ${fi.note}`);
 if (fi.head) {
   // ENG-CORE-006: every fitted value shown is the engine's (independent include_attributes=all calc of the same fit),
@@ -160,7 +160,7 @@ if (fi.head) {
   // modules): damage multiplier x 1.25 (Gallente Cruiser 5 %/level) x 1.25 (Medium Hybrid Turret) x 1.10 (Medium
   // Blaster Specialization) x 1.15 (Surgical Strike), rate of fire x 0.90 (Gunnery) x 0.80 (Rapid Firing)
   const fv = await p.evaluate(async () => {
-    const rows = Object.fromEntries([...document.querySelectorAll('.dialog table.attrs tr[data-attr]')].map((r) => [r.dataset.attr, { name: r.dataset.name, base: r.dataset.base === '' ? null : +r.dataset.base, fitted: r.dataset.fitted === '' ? null : +r.dataset.fitted }]));
+    const rows = Object.fromEntries([...document.querySelectorAll('.infopane table.attrs tr[data-attr]')].map((r) => [r.dataset.attr, { name: r.dataset.name, base: r.dataset.base === '' ? null : +r.dataset.base, fitted: r.dataset.fitted === '' ? null : +r.dataset.fitted }]));
     const mi = window.__lastInfoCtx?.module;
     const req = window.__lastRequest;
     const r = await window.__eveEngine.calc({ ...req, options: { ...(req.options ?? {}), include_attributes: 'all' } });
@@ -178,15 +178,15 @@ if (fi.head) {
 }
 // attribute override (Pyfa-style): damageMultiplier of the blaster type
 const wd0 = s.offense?.total?.weapon_dps;
-await p.click('.dialog input.editov');
-await p.waitForSelector('.dialog input.ovin[data-attr="64"]');
-await p.type('.dialog input.ovin[data-attr="64"]', '10');
+await p.click('.infopane input.editov');
+await p.waitForSelector('.infopane input.ovin[data-attr="64"]');
+await p.type('.infopane input.ovin[data-attr="64"]', '10');
 s = await waitNew(s);
 check('web.e2e.attribute-override: attribute override raises weapon dps', s.offense?.total?.weapon_dps > wd0 * 1.5, `${wd0} -> ${s.offense?.total?.weapon_dps}`);
-await p.evaluate(() => { const i = document.querySelector('.dialog input.ovin[data-attr="64"]'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(i, ''); i.dispatchEvent(new Event('input', { bubbles: true })); });
+await p.evaluate(() => { const i = document.querySelector('.infopane input.ovin[data-attr="64"]'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(i, ''); i.dispatchEvent(new Event('input', { bubbles: true })); });
 s = await waitNew(s);
 check('web.e2e.attribute-override-removed: removing the override restores dps', Math.abs(s.offense?.total?.weapon_dps - wd0) < 1e-6, s.offense?.total?.weapon_dps);
-await clickText('.dialog button', 'Close');
+await p.click('.infopane .infoclose');
 
 // manual fleet buff (shield harmonizing)
 await clickText('.tabs button', 'Projected');
