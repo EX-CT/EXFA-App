@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { t } from '../i18n';
 const tr = t;
 import type { InfoCtx } from './Market';
