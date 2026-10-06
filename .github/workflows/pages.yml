@@ -57,6 +57,8 @@ jobs:
             node tools/slim-presets.mjs dl/presets.json public/data/presets-web.json | tee -a "$GITHUB_STEP_SUMMARY"
           else echo "no presets.json in $TAG: implant sets / NPC profiles disabled" >> "$GITHUB_STEP_SUMMARY"; fi
           echo "DATASET_TAG=$TAG" >> "$GITHUB_ENV"
+          # the batch bench suite's reference price block reads the dataset via EXFA_DATASET
+          echo "EXFA_DATASET=$PWD/public/data/dataset.json.gz" >> "$GITHUB_ENV"
           echo "dataset: $TAG ($(ls dl/dataset-*))" >> "$GITHUB_STEP_SUMMARY"
       - name: Latest market price snapshot (EXFA-Data prices-* release; served with the site for "update prices")
         # /releases/latest is the sde dataset release, so list releases and take the newest tag starting with
