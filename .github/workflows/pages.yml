@@ -63,13 +63,18 @@ jobs:
         # `prices-` (release assets are not CORS-readable from the browser; the site serves its own copy)
         run: |
           PTAG=$(gh release list -R EX-CT/EXFA-Data --json tagName --jq '[.[] | select(.tagName | startswith("prices-"))][0].tagName')
-          test -n "$PTAG" || { echo "no prices-* release in EX-CT/EXFA-Data"; exit 1; }
-          mkdir -p public/prices dlp
-          gh release download "$PTAG" -R EX-CT/EXFA-Data -D dlp -p 'prices-*.json.gz' -p SHA256SUMS
-          (cd dlp && sha256sum -c --ignore-missing SHA256SUMS)
-          cp dlp/prices-*.json.gz public/prices/latest.json.gz
-          echo "PRICES_SNAPSHOT=$PTAG" >> "$GITHUB_ENV"
-          echo "price snapshot: $PTAG" >> "$GITHUB_STEP_SUMMARY"
+          if [ -z "$PTAG" ]; then
+            # the daily prices-snapshot workflow may not have published yet; the engine's embedded
+            # snapshot still serves the site — deploy without the served copy and flag it
+            echo "::warning::no prices-* release in EX-CT/EXFA-Data yet; deploying without public/prices/latest.json.gz"
+          else
+            mkdir -p public/prices dlp
+            gh release download "$PTAG" -R EX-CT/EXFA-Data -D dlp -p 'prices-*.json.gz' -p SHA256SUMS
+            (cd dlp && sha256sum -c --ignore-missing SHA256SUMS)
+            cp dlp/prices-*.json.gz public/prices/latest.json.gz
+            echo "PRICES_SNAPSHOT=$PTAG" >> "$GITHUB_ENV"
+            echo "price snapshot: $PTAG" >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Engine WASM + native binary from the EXFA-Engine release
         # hard requirement: the wasm-worker backend (stats + graphs) and the formats module carry the site;
         # a failed download fails the deploy
