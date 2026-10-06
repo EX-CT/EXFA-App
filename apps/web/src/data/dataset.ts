@@ -93,6 +93,14 @@ export class Dataset {
   }
 
   static async load(url: string, onProgress?: (msg: string) => void): Promise<Dataset> {
+    // returning visits: HEAD the deployed file for its ETag, then reuse the parsed object
+    // from IndexedDB — skips both the download and the JSON.parse/index build
+    const { datasetFingerprint, cachedDataset, storeDataset } = await import('./datasetCache');
+    const etag = url.startsWith('http') || url.startsWith('/') ? await datasetFingerprint(url) : null;
+    if (etag) {
+      const cached = await cachedDataset(etag);
+      if (cached) { onProgress?.('loading cached dataset…'); return new Dataset(cached as RawDataset); }
+    }
     onProgress?.('downloading dataset…');
     const res = await fetch(url);
     if (!res.ok) throw new Error(`dataset ${url}: HTTP ${res.status}`);
@@ -103,7 +111,9 @@ export class Dataset {
       buf = new Uint8Array(await new Response(s).arrayBuffer());
     }
     onProgress?.('indexing…');
-    return new Dataset(JSON.parse(new TextDecoder().decode(buf)));
+    const raw = JSON.parse(new TextDecoder().decode(buf));
+    if (etag) storeDataset(etag, raw).catch(() => {});
+    return new Dataset(raw);
   }
 
   type(id: number): TypeRow | undefined { return this.raw.types[id]; }

@@ -81,12 +81,16 @@ export default function App() {
 
   // dataset (UI copy) from the pipeline release, deployed with the site
   useEffect(() => {
-    // the formats layer (exfa-formats WASM, same engine release as exfa_wasm.wasm) must be ready before
-    // ?eft= / ?dna= are parsed; ?formats=builtin forces the built-in TypeScript parsers
+    // the formats layer (exfa-formats WASM, same engine release as exfa_wasm.wasm) does NOT gate
+    // startup — the built-in TS parsers cover eft/dna/esi meanwhile, and the wasm module lands a
+    // moment later. It IS awaited when the URL carries an import (?eft=/?dna=/…), where rarer
+    // formats may need it. ?formats=builtin forces the built-in TypeScript parsers.
     const fq = new URLSearchParams(location.search).get('formats');
     const formatsUrl = fq === 'builtin' ? null : new URL(`${import.meta.env.BASE_URL}engines/f/exfa_formats_wasm.wasm`, location.href).href;
-    Promise.all([Dataset.load(settings.engine.datasetUrl, setLoadMsg), initFormats(formatsUrl), libraryReady])
-      .then(([d, fs]) => { d.lang = settings.lang; (window as any).__eveFormats = fs; (window as any).__eveFormatsRpc = formatsRpc(); setDs(d); }, (e) => setLoadMsg(`${t('failed to load dataset')}: ${e.message}`));
+    const hasImportParam = /[?&](eft|dna|fit|xml|eftcfg|dnaalt)=/i.test(location.search);
+    const formatsReady = initFormats(formatsUrl).then((fs) => { (window as any).__eveFormats = fs; (window as any).__eveFormatsRpc = formatsRpc(); return fs; });
+    Promise.all([Dataset.load(settings.engine.datasetUrl, setLoadMsg), hasImportParam ? formatsReady : Promise.resolve(null), libraryReady])
+      .then(([d]) => { d.lang = settings.lang; setDs(d); }, (e) => setLoadMsg(`${t('failed to load dataset')}: ${e.message}`));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
