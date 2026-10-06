@@ -16,6 +16,8 @@ export interface EsiCharacter {
   skills?: Record<number, number>;
   /** implant type ids from the last import */
   implants?: number[];
+  /** pilot security status (public character info — needed by Society ships' traits) */
+  security_status?: number | null;
   imported_at?: string;
 }
 
@@ -103,8 +105,12 @@ export async function importEsiCharacter(ch: EsiCharacter): Promise<EsiCharacter
   };
   const skills = (await get('/skills/')).skills as { skill_id: number; active_skill_level: number }[];
   const implants = await get('/implants/') as number[];
+  // security status is public data: /characters/{id}/ needs no token at all. SoCT ships
+  // (Gnosis, Sunesis, Metamorphosis, Apotheosis) scale their traits with it. Best-effort:
+  // a failed lookup must not sink the skills import.
+  const pub = await fetch(`${ESI}/characters/${ch.character_id}/`).then((r) => (r.ok ? r.json() : null)).catch(() => null) as { security_status?: number } | null;
   const all = loadEsiCharacters();
-  const out: EsiCharacter = { ...ch, skills: Object.fromEntries(skills.map((s) => [s.skill_id, s.active_skill_level])), implants, imported_at: new Date().toISOString() };
+  const out: EsiCharacter = { ...ch, skills: Object.fromEntries(skills.map((s) => [s.skill_id, s.active_skill_level])), implants, security_status: pub?.security_status ?? null, imported_at: new Date().toISOString() };
   all[ch.character_id] = out;
   saveEsiCharacters(all);
   return out;

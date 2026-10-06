@@ -94,6 +94,7 @@ function EsiPanel({ ds, lib, fit, onLib, onFit, onSel }: { ds: Dataset; lib: Lib
         ...(existing ?? { id: uid(), default_level: 0 }),
         name: ec.character_name, builtin: false,
         levels: { ...Object.fromEntries(ds.skills.map((s) => [s, 0])), ...ec.skills },
+        security_status: ec.security_status ?? existing?.security_status ?? null,
       };
       delete c.levels['0'];
       onLib({ ...lib, characters: { ...lib.characters, [c.id]: c } });
@@ -118,7 +119,7 @@ function EsiPanel({ ds, lib, fit, onLib, onFit, onSel }: { ds: Dataset; lib: Lib
       {chars.map((ec) => (
         <div className="row esichar" key={ec.character_id}>
           <b>{ec.character_name}</b>
-          {ec.imported_at && <span className="muted small">{Object.keys(ec.skills ?? {}).length} {t('skills')} · {ec.implants?.length ?? 0} {t('implants')} · {new Date(ec.imported_at).toLocaleString(undefined, { hour12: false })}</span>}
+          {ec.imported_at && <span className="muted small">{Object.keys(ec.skills ?? {}).length} {t('skills')} · {ec.implants?.length ?? 0} {t('implants')}{ec.security_status != null ? ` · sec ${ec.security_status.toFixed(2)}` : ''} · {new Date(ec.imported_at).toLocaleString(undefined, { hour12: false })}</span>}
           <button disabled={busy === ec.character_id} onClick={() => doImport(ec.character_id)}>{busy === ec.character_id ? t('importing…') : t('Import skills / implants')}</button>
           <button className="danger" onClick={() => { unlinkEsiCharacter(ec.character_id); bump((n) => n + 1); }}>{t('Unlink')}</button>
         </div>
