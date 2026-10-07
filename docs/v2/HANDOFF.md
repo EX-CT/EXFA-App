@@ -73,6 +73,6 @@ Still to do for Stage B:
 ## Environment notes
 
 - Run App tests from `apps/web` (root vitest also scans `packages/mcp/dist`).
-- Engine builds need `EXFA_DATASET=<path to dataset-3569502-r7.json.gz>`; don't run repo-wide `cargo fmt` (Engine is not rustfmt-clean).
+- Engine builds need `EXFA_DATASET=<path to dataset-3586130-r7.json.gz>` (or the tag pinned in sde.lock); don't run repo-wide `cargo fmt` (Engine is not rustfmt-clean).
 - `packages/mcp`: after changing a tool description run `npm run schemas`, otherwise the schema snapshot CI fails.
-- Known follow-up outside Stage B: UI dataset SDE `3579973` vs engine embedded SDE `3569502`.
+- Resolved follow-up: engine `v0.2.1` embeds SDE `3586130` — same as the UI dataset (was `3569502`).
