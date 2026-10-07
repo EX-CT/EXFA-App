@@ -541,7 +541,7 @@ const ab2 = await p.evaluate(() => ({ status: document.querySelector('.about-sta
   eng: document.querySelector('.about-engine')?.textContent ?? '', data: document.querySelector('.about-dataset')?.textContent ?? '',
   timings: document.querySelector('.about-timings')?.textContent ?? '', links: document.querySelectorAll('.about a').length }));
 check('web.e2e.about-page: About popover shows engine, dataset, startup timings and repository links',
-  ab2.status.includes('exfa-engine 0.2.0') && /\bSDE \d+\b/.test(ab2.eng) && /\bSDE \d+\b/.test(ab2.data) && ab2.timings.includes('Dataset') && ab2.timings.includes('First calc') && ab2.links >= 6,
+  /\bexfa-engine \d+\.\d+\.\d+\b/.test(ab2.status) && /\bSDE \d+\b/.test(ab2.eng) && /\bSDE \d+\b/.test(ab2.data) && ab2.timings.includes('Dataset') && ab2.timings.includes('First calc') && ab2.links >= 6,
   JSON.stringify(ab2));
 // Full zh-CN UI: tabs, stats sections, slot headers and import/export controls have no untranslated labels.
 await langSel('zh');
