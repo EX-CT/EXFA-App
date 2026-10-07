@@ -94,7 +94,8 @@ await clickText('.tabs button', 'Projected');
 await p.evaluate(() => { const c = document.querySelector('.toggle input'); c.click(); });
 await p.type('.market .search', 'Stasis Webifier II');
 await p.waitForFunction(() => [...document.querySelectorAll('.trow .tname')].some((e) => e.textContent === 'Stasis Webifier II'));
-await p.evaluate(() => [...document.querySelectorAll('.trow .tname')].find((e) => e.textContent === 'Stasis Webifier II').click());
+const webRowId = await p.evaluate(() => Number([...document.querySelectorAll('.trow .tname')].find((e) => e.textContent === 'Stasis Webifier II').closest('.trow')?.dataset.tid));
+await p.dragAndDrop(`.market .trow[data-tid="${webRowId}"]`, '.fit-area .fitting');
 s = await waitNew(s);
 check('web.e2e.projected-web: projected web slows the ship', s.navigation.max_velocity < v0 * 0.6, `${v0} -> ${s.navigation.max_velocity}`);
 
@@ -359,28 +360,133 @@ await p.evaluate(() => { const l = [...document.querySelectorAll('.subopts label
 s = await waitNew(s);
 const f1 = s.offense?.total?.fighter_dps ?? s.offense?.total?.drone_dps;
 check('web.e2e.fighter-ability-toggle: disabling an attack ability lowers fighter dps', f1 < f0, `${f0} -> ${f1}`);
-// --- milestone 3: what-if, compare, multi-fit graphs, target fit, ECM burst graph (library now holds several fits) ---
+// --- milestone 3: market compare, multi-fit graphs, target fit, ECM burst graph (library now holds several fits) ---
 const RIFTER = '[Rifter, E2E Rifter]\nGyrostabilizer II\n\n1MN Afterburner II\n\n200mm AutoCannon II, EMP S\n200mm AutoCannon II, EMP S\n';
 await p.goto(withQuery(`eft=${encodeURIComponent(RIFTER)}`), { waitUntil: 'networkidle0', timeout: 120000 });
 await p.waitForFunction(() => window.__lastStats?.ship?.name === 'Rifter', { timeout: 120000 });
 s = await stats();
 const rd0 = s.offense?.total?.dps?.total;
-await clickText('.center .tabs button', 'What-if');
-await p.waitForSelector('.whatif select.wi-module');
-const acIdx = await p.evaluate(() => [...document.querySelector('.whatif select.wi-module').options].find((o) => o.text.includes('200mm AutoCannon II'))?.value);
-await p.select('.whatif select.wi-module', acIdx);
-const wv = await p.waitForFunction(() => window.__lastWhatIf?.mode === 'variations' && window.__lastWhatIf.rows.some((r) => r.label.includes('AutoCannon')) && window.__lastWhatIf, { timeout: 60000 }).then((h) => h.jsonValue()).catch(() => null);
-const t1 = wv?.rows.find((r) => r.label === '200mm AutoCannon I');
-check('web.e2e.whatif-variations: what-if lists module variations with engine dps (T1 below T2)', wv && wv.rows.length >= 3 && t1 && t1.value < wv.base && Math.abs(wv.base - rd0) < 1e-6, wv ? `${wv.rows.length} variants; base ${wv.base}, T1 ${t1?.value}` : 'no result');
-await p.select('.whatif select.wi-mode', 'charges');
-const wc = await p.waitForFunction(() => window.__lastWhatIf?.mode === 'charges' && window.__lastWhatIf.rows.length && window.__lastWhatIf, { timeout: 60000 }).then((h) => h.jsonValue()).catch(() => null);
-check('web.e2e.whatif-charges: what-if ranks compatible charges', wc && wc.rows.length >= 5 && wc.rows.some((r) => r.value > wc.base) && wc.rows.some((r) => r.value < wc.base), wc ? `${wc.rows.length} charges, base ${wc.base}` : 'no result');
-await p.click('.whatif .wi-table tbody tr:nth-child(2) .wi-apply');
+await clickText('aside.left .tabs button', 'Market');
+await clickText('.center .tabs button', 'Compare strip');
+await clickText('.operation-mode button', 'Smart');
+await p.click('.market .search');
+await p.keyboard.press('w');
+const modeWhileTyping = await p.$eval('.operation-mode button[aria-pressed="true"]', (el) => el.textContent.trim());
+check('web.e2e.market-hotkey-typing: operation hotkeys do not change mode while typing', modeWhileTyping.startsWith('Smart'), modeWhileTyping);
+await p.keyboard.press('Control+a');
+await p.keyboard.press('Backspace');
+await p.click('.operation-mode button[aria-pressed="true"]');
+await p.keyboard.press('w');
+const hotkeyMode = await p.$eval('.operation-mode button[aria-pressed="true"]', (el) => el.textContent.trim());
+check('web.e2e.market-hotkey: W selects Replace outside a text field', hotkeyMode.startsWith('Replace'), hotkeyMode);
+await clickText('.operation-mode button', 'Smart');
+const marketSearch = async (name) => {
+  await p.click('.market .search');
+  await p.keyboard.down('Control'); await p.keyboard.press('a'); await p.keyboard.up('Control');
+  await p.keyboard.press('Backspace');
+  await p.type('.market .search', name);
+  await p.waitForFunction((n) => [...document.querySelectorAll('.trow .tname')].some((e) => e.textContent.trim() === n), { timeout: 30000 }, name);
+  return p.evaluate((n) => Number([...document.querySelectorAll('.trow')].find((row) => row.querySelector('.tname')?.textContent.trim() === n)?.dataset.tid), name);
+};
+const selectModule = async (name) => p.evaluate((n) => {
+  const row = [...document.querySelectorAll('.fit-area .mod[data-idx]')].find((el) => el.querySelector('.mname')?.textContent.includes(n));
+  row?.click();
+  return !!row;
+}, name);
+const fitModuleNames = async () => p.$$eval('.fit-area .mod[data-idx] .mname', (els) => els.map((el) => el.textContent.trim()));
+const autoCannonRow = await p.evaluate(() => [...document.querySelectorAll('.fit-area .mod[data-idx]')]
+  .find((el) => el.querySelector('.mname')?.textContent.includes('200mm AutoCannon II'))?.dataset.idx);
+const needsGroup = await p.evaluate((idx) => !document.querySelector(`.fit-area .mod[data-idx="${idx}"] .gcount`), autoCannonRow);
+if (needsGroup) {
+  await p.click(`.fit-area .mod[data-idx="${autoCannonRow}"]`, { button: 'right' });
+  await p.waitForSelector('.ctxmenu button');
+  await clickText('.ctxmenu button', 'Group identical modules');
+}
+await selectModule('200mm AutoCannon II');
+const selectedGun = await p.$eval('.fit-area .mod.selected .mname', (el) => el.textContent.trim()).catch(() => '');
+check('web.e2e.market-select-module: selecting a fitted gun highlights it', selectedGun.includes('200mm AutoCannon II'), selectedGun);
+const originalGunRows = await fitModuleNames();
+const originalModuleCount = await p.evaluate(() => window.__lastRequest?.modules?.length ?? 0);
+const gatlingId = await marketSearch('125mm Gatling AutoCannon II');
+await p.click(`.market .trow[data-tid="${gatlingId}"]`);
+await p.waitForFunction(() => document.querySelector('.market .trow.candidate') && document.querySelector('.strip-candidate'));
+const previewGunRows = await fitModuleNames();
+check('web.e2e.market-smart-preview: single-click pins the candidate without changing the fit',
+  previewGunRows.join('|') === originalGunRows.join('|') && await p.evaluate((n) => window.__lastRequest?.modules?.length === n, originalModuleCount)
+    && Math.abs((await stats()).offense?.total?.dps?.total - rd0) < 1e-6
+    && await p.$eval('.market .trow.candidate', (el) => !!el) && await p.$eval('.strip-candidate', (el) => !!el),
+  `${previewGunRows.join(' | ')}; DPS ${(await stats()).offense?.total?.dps?.total}`);
+await p.click(`.market .trow[data-tid="${gatlingId}"]`, { clickCount: 2 });
 s = await waitNew(s);
-check('web.e2e.whatif-apply: applying a scenario changes the fit; undo restores it', Math.abs(s.offense?.total?.dps?.total - rd0) > 1e-6, `${rd0} -> ${s.offense?.total?.dps?.total}`);
-await clickText('header button', '↶ Undo');
+const replacedGunRows = await fitModuleNames();
+const replaceToast = await p.waitForFunction(() => [...document.querySelectorAll('.toast')].some((el) => /Replaced ×\d+ 200mm AutoCannon II → 125mm Gatling AutoCannon II/.test(el.textContent)), { timeout: 10000 })
+  .then(() => p.$$eval('.toast', (els) => els.map((el) => el.textContent).find((text) => text.includes('125mm Gatling AutoCannon II')) ?? ''));
+check('web.e2e.market-smart-replace: double-click replaces the selected gun group and offers Undo',
+  replacedGunRows.some((name) => name.includes('×2') && name.includes('125mm Gatling AutoCannon II'))
+    && replaceToast.includes('Replaced ×2') && replaceToast.includes('Undo'),
+  `${replacedGunRows.join(' | ')}; ${replaceToast}`);
+await p.evaluate(() => document.activeElement?.blur());
+await p.keyboard.press('Control+z');
 s = await waitNew(s);
-check('web.e2e.whatif-undo: undo after apply', Math.abs(s.offense?.total?.dps?.total - rd0) < 1e-6, s.offense?.total?.dps?.total);
+check('web.e2e.market-ctrl-z: Ctrl+Z restores the replaced guns',
+  Math.abs(s.offense?.total?.dps?.total - rd0) < 1e-6 && (await fitModuleNames()).join('|') === originalGunRows.join('|'),
+  `${s.offense?.total?.dps?.total}; ${(await fitModuleNames()).join(' | ')}`);
+await p.keyboard.press('Control+y');
+s = await waitNew(s);
+check('web.e2e.market-ctrl-y: Ctrl+Y redoes the market replacement',
+  Math.abs(s.offense?.total?.dps?.total - rd0) > 1e-6 && (await fitModuleNames()).some((name) => name.includes('125mm Gatling AutoCannon II')),
+  `${s.offense?.total?.dps?.total}; ${(await fitModuleNames()).join(' | ')}`);
+await clickText('.toast button:not(.toast-dismiss)', 'Undo');
+s = await waitNew(s);
+check('web.e2e.market-toast-undo: the replacement toast action restores the previous fit',
+  Math.abs(s.offense?.total?.dps?.total - rd0) < 1e-6 && (await fitModuleNames()).join('|') === originalGunRows.join('|'),
+  `${s.offense?.total?.dps?.total}; ${(await fitModuleNames()).join(' | ')}`);
+
+await clickText('.operation-mode button', 'Add');
+const beforeAddCount = await p.evaluate(() => window.__lastRequest?.modules?.length ?? 0);
+await p.click(`.market .trow[data-tid="${gatlingId}"]`);
+await p.click(`.market .trow[data-tid="${gatlingId}"]`, { clickCount: 2 });
+s = await waitNew(s);
+const afterAddCount = await p.evaluate(() => window.__lastRequest?.modules?.length ?? 0);
+check('web.e2e.market-add: Add mode adds instead of replacing', afterAddCount === beforeAddCount + 1
+  && (await fitModuleNames()).some((name) => name.includes('200mm AutoCannon II'))
+  && (await fitModuleNames()).some((name) => name.includes('125mm Gatling AutoCannon II')), `${beforeAddCount} -> ${afterAddCount}`);
+await p.evaluate(() => document.activeElement?.blur());
+await p.keyboard.press('Control+z');
+s = await waitNew(s);
+
+const beforeCompareApplyCount = await p.evaluate(() => window.__lastRequest?.modules?.length ?? 0);
+await p.click(`.market .trow[data-tid="${gatlingId}"]`);
+await p.waitForSelector('.strip-candidate button:not(:disabled)', { timeout: 30000 });
+await p.click('.strip-candidate button');
+s = await waitNew(s);
+const afterCompareApplyCount = await p.evaluate(() => window.__lastRequest?.modules?.length ?? 0);
+check('web.e2e.market-compare-apply: compare Apply uses Smart semantics even while Add mode is active',
+  afterCompareApplyCount === beforeCompareApplyCount && (await fitModuleNames()).some((name) => name.includes('×2') && name.includes('125mm Gatling AutoCannon II')),
+  `${beforeCompareApplyCount} -> ${afterCompareApplyCount}; ${(await fitModuleNames()).join(' | ')}`);
+await p.evaluate(() => document.activeElement?.blur());
+await p.keyboard.press('Control+z');
+s = await waitNew(s);
+
+await clickText('.operation-mode button', 'Replace');
+await p.keyboard.press('Escape');
+const beforeInvalidReplace = JSON.stringify(await stats());
+await p.click(`.market .trow[data-tid="${gatlingId}"]`, { clickCount: 2 });
+const noSelectionToast = await p.waitForFunction(() => [...document.querySelectorAll('.toast')].some((el) => el.textContent.includes('Select a same-slot module first.')), { timeout: 10000 })
+  .then(() => p.$$eval('.toast', (els) => els.map((el) => el.textContent).find((text) => text.includes('Select a same-slot module first.')) ?? ''));
+check('web.e2e.market-replace-without-selection: warns and leaves the fit unchanged',
+  JSON.stringify(await stats()) === beforeInvalidReplace && noSelectionToast.includes('Select a same-slot module first.'),
+  `${noSelectionToast}; ${JSON.stringify(await stats()) === beforeInvalidReplace}`);
+
+await selectModule('200mm AutoCannon II');
+const artilleryId = await marketSearch('650mm Artillery Cannon II');
+await p.click(`.market .trow[data-tid="${artilleryId}"]`);
+await p.waitForFunction(() => document.querySelector('.strip-candidate.strip-bad .strip-tooltip'));
+await p.hover('.strip-candidate');
+const violationTooltip = await p.$eval('.strip-candidate .strip-tooltip', (el) => el.textContent.trim());
+check('web.e2e.market-overflow-warning: an overpowered same-slot candidate has a red frame and reason',
+  await p.$eval('.strip-candidate', (el) => el.classList.contains('strip-bad')) && /Powergrid overloaded/.test(violationTooltip),
+  violationTooltip);
 // compare: the active Rifter against the other frigates in the library (Multi A Rifter, Multi B Merlin)
 await clickText('.center .tabs button', 'Fit compare');
 await p.waitForSelector('.compare');
@@ -425,6 +531,7 @@ check('web.e2e.about-page: About popover shows engine, dataset, startup timings 
 await langSel('zh');
 await new Promise((r) => setTimeout(r, 300));
 const zhUi = await p.evaluate(() => ({ tabs: [...document.querySelectorAll('.tabs button')].map((x) => x.textContent.replace(/\s*\(\d+\)$/, '')),
+  dockTabs: [...document.querySelectorAll('.dock-head .tabs button')].map((x) => x.textContent.trim()),
   sections: [...document.querySelectorAll('.stats .section h3')].map((x) => x.firstChild?.textContent ?? ''), slots: [...document.querySelectorAll('.slotgroup h4')].map((x) => x.firstChild?.textContent ?? '') }));
 await clickText('.center .tabs button', '导入 / 导出');
 const zhIo = await p.evaluate(() => [...document.querySelectorAll('.import-export button')].map((x) => x.textContent));
@@ -432,8 +539,11 @@ await langSel('en');
 const latin = (xs) => xs.filter((x) => /[a-z]{3,}/.test(x.replace(/DPS|EFT|DNA|ESI|JSON|XML|Ctrl/g, '')));
 const zhAll = [...zhUi.tabs, ...zhUi.sections, ...zhUi.slots, ...zhIo];
 check('web.e2e.zh-ui: zh-CN UI (dock tabs, stats sections, slots, import/export controls) has no untranslated labels',
-  zhUi.tabs.includes('假设分析') && zhUi.tabs.includes('配置对比') && zhUi.sections.length > 3 && zhIo.includes('导入') && latin(zhAll).length === 0,
+  zhUi.tabs.includes('对比栏') && zhUi.tabs.includes('配置对比') && zhUi.sections.length > 3 && zhIo.includes('导入') && latin(zhAll).length === 0,
   latin(zhAll).join(' | ') || `${zhAll.length} labels`);
+check('web.e2e.whatif-tab-removed: the four-tab dock uses the compare strip instead of What-if',
+  zhUi.dockTabs.length === 4 && zhUi.dockTabs.some((x) => x.startsWith('对比栏')) && !zhUi.dockTabs.some((x) => x.includes('假设分析')),
+  zhUi.dockTabs.join(' | '));
 // ---- fit library (IndexedDB): Pyfa saved-fits database import, folders / tags, rename, duplicate, delete, exports,
 // backup / restore, persistence across reloads, DNA import, migration of the localStorage library ----
 {

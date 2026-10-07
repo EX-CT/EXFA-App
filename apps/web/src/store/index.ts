@@ -2,7 +2,7 @@
 // settings in localStorage. The engine itself is stateless.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { BUILTIN_CHARACTERS, BUILTIN_DAMAGE, BUILTIN_TARGETS } from '../data/presets';
-import type { Library } from '../fit/model';
+import type { Library, MarketMode } from '../fit/model';
 import type { EngineConfig } from '../engine/adapter';
 import { diffLibrary, LEGACY_KEY, openLibrary, storedPart, type LibraryBackend, type StoredLibrary } from './library';
 
@@ -16,6 +16,8 @@ export interface Settings {
   dockCollapsed: boolean;
   infoHeight: number;
   infoCollapsed: boolean;
+  marketMode: MarketMode;
+  metricPins: Record<string, string[]>;
 }
 export interface AppState { lib: Library; settings: Settings }
 
@@ -33,6 +35,7 @@ function initial(): AppState {
   let settings: Settings = {
     engine: defaultEngineConfig(), lang: 'en', activeFitId: null,
     dockHeight: 34, dockCollapsed: false, infoHeight: 190, infoCollapsed: false,
+    marketMode: 'smart', metricPins: {},
   };
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) ?? 'null');

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { t as tr } from '../i18n';
 import type { Dataset, Kind } from '../data/dataset';
 import type { Engine } from '../engine/adapter';
@@ -10,53 +10,95 @@ const KIND_FILTERS: [string, Kind[] | null][] = [
   ['Drones', ['drone']], ['Fighters', ['fighter']], ['Implants', ['implant']], ['Boosters', ['booster']],
 ];
 
-function Node({ ds, id, onPick, onInfo, depth, openIds, onToggle, locating }: { ds: Dataset; id: number; onPick: (t: number) => void; onInfo: (t: number) => void; depth: number; openIds: Set<number>; onToggle: (id: number) => void; locating: number | null }) {
+function Node({ ds, id, onPick, onPreview, onInfo, depth, openIds, onToggle, locating, counts, candidateId, showSlot }: {
+  ds: Dataset; id: number; onPick: (t: number) => void; onPreview: (t: number) => void; onInfo: (t: number) => void;
+  depth: number; openIds: Set<number>; onToggle: (id: number) => void; locating: number | null; counts: Map<number, number>;
+  candidateId: number | null; showSlot: boolean;
+}) {
   const open = openIds.has(id);
   const kids = ds.mgChildren.get(id) ?? [];
   const types = ds.mgTypes.get(id) ?? [];
   return (
     <li>
-      <div className="mg" style={{ paddingLeft: depth * 12 }} onClick={() => onToggle(id)}>{open ? '▾' : '▸'} {ds.mgName(id)}</div>
+      <div className="mg" style={{ paddingLeft: depth * 8 }} onClick={() => onToggle(id)}>
+        <span className="mg-caret">{open ? '▾' : '▸'}</span><span className="mg-name">{ds.mgName(id)}</span><span className="mg-count">{counts.get(id) ?? 0}</span>
+      </div>
       {open && (
         <ul>
-          {kids.map((k) => <Node key={k} ds={ds} id={k} onPick={onPick} onInfo={onInfo} depth={depth + 1} openIds={openIds} onToggle={onToggle} locating={locating} />)}
-          {types.map((t) => <TypeRowView key={t} ds={ds} id={t} onPick={onPick} onInfo={onInfo} depth={depth + 1} locating={locating} />)}
+          {kids.map((k) => <Node key={k} ds={ds} id={k} onPick={onPick} onPreview={onPreview} onInfo={onInfo} depth={depth + 1} openIds={openIds} onToggle={onToggle} locating={locating} counts={counts} candidateId={candidateId} showSlot={showSlot} />)}
+          {types.map((t) => <TypeRowView key={t} ds={ds} id={t} onPick={onPick} onPreview={onPreview} onInfo={onInfo} depth={depth + 1} locating={locating} candidateId={candidateId} showSlot={showSlot} />)}
         </ul>
       )}
     </li>
   );
 }
 
-export function TypeRowView({ ds, id, onPick, onInfo, depth = 0, locating }: { ds: Dataset; id: number; onPick: (t: number) => void; onInfo: (t: number) => void; depth?: number; locating?: number | null }) {
+function metaBadge(ds: Dataset, id: number): { text: string; tone: string } | null {
+  const type = ds.type(id);
+  if (type?.meta_group === 1) return null;
+  const groups: Record<number, [string, string]> = {
+    2: ['T2', 't2'], 3: ['S', 'storyline'], 4: ['F', 'faction'], 5: ['O', 'officer'], 6: ['D', 'deadspace'],
+  };
+  const known = type?.meta_group == null ? null : groups[type.meta_group];
+  if (known) return { text: known[0], tone: known[1] };
+  const level = ds.metaLevel(id);
+  return level > 0 ? { text: `M${level}`, tone: 'meta-level' } : null;
+}
+
+export function TypeRowView({ ds, id, onPick, onPreview, onInfo, depth = 0, locating, candidateId, showSlot = false }: {
+  ds: Dataset; id: number; onPick: (t: number) => void; onPreview: (t: number) => void; onInfo: (t: number) => void;
+  depth?: number; locating?: number | null; candidateId?: number | null; showSlot?: boolean;
+}) {
   const slot = ds.slot(id);
-  const ml = ds.type(id)?.meta_level;
+  const badge = metaBadge(ds, id);
+  const type = ds.type(id);
+  const name = ds.name(id);
+  const title = `${name} · ${ds.groupName(type?.group ?? 0)}`;
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   return (
-    <li className={'trow' + (locating === id ? ' locating' : '')} data-tid={id} style={{ paddingLeft: depth * 12 + 10 }} onDoubleClick={() => onPick(id)} title={tr('double-click to add, or drag onto the fitting')}
+    <li className={'trow' + (locating === id ? ' locating' : '') + (candidateId === id ? ' candidate' : '')} data-tid={id}
+      style={{ paddingLeft: depth * 8 }} onClick={(e) => { if (!(e.target as HTMLElement).closest('button')) onPreview(id); }}
+      onDoubleClick={() => onPick(id)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); onPick(id); } }}
+      title={tr('double-click or press Enter to apply; drag onto the fitting')}
       onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY }); }}
       draggable onDragStart={(e) => { draggedType.id = id; e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('application/x-exfa-type', String(id)); e.dataTransfer.setData('text/plain', `type:${id}`); }} onDragEnd={() => { draggedType.id = null; }}>
+      <div className="trow-main" role="button" tabIndex={0} aria-label={title}>
+        <TypeIcon id={id} size={32} />
+        <span className="tname" title={title}>{name}</span>
+        <span className={`meta${badge ? ` ${badge.tone}` : ' empty'}`}>{badge?.text ?? ''}</span>
+        {showSlot && slot && <span className={`slot-badge slot-${slot}`}>{({ high: 'H', mid: 'M', low: 'L', rig: 'R', subsystem: 'S', service: 'S' })[slot]}</span>}
+      </div>
       {menu && (
         <FloatMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)}>
           <div className="ctxhead">{ds.name(id)}</div>
           <button onClick={() => { onInfo(id); setMenu(null); }}>{tr('Show info')}</button>
-          <button onClick={() => { onPick(id); setMenu(null); }}>{tr('Add to fit')}</button>
+          <button onClick={() => { onPick(id); setMenu(null); }}>{tr('Apply pick')}</button>
         </FloatMenu>
       )}
-      <TypeIcon id={id} size={20} />
-      <span className={'kind k-' + ds.kind(id)}>{tr(slot ?? ds.kind(id))}</span>
-      <span className="tname" onClick={() => onPick(id)}>{ds.name(id)}</span>
-      {ml ? <span className="meta">M{ml}</span> : null}
-      <button className="mini" onClick={(e) => { e.stopPropagation(); onInfo(id); }} title={tr('Show info')}>i</button>
+      <button className="mini market-info" onClick={(e) => { e.stopPropagation(); onInfo(id); }} title={tr('Show info')}>i</button>
     </li>
   );
 }
 
-export function Market({ ds, engine, onPick, onInfo, locate }: { ds: Dataset; engine?: Engine | null; onPick: (t: number) => void; onInfo: (t: number) => void; locate?: { id: number; n: number } | null }) {
+export function Market({ ds, engine, onPick, onPreview, onInfo, locate, candidateId }: {
+  ds: Dataset; engine?: Engine | null; onPick: (t: number) => void; onPreview: (t: number) => void; onInfo: (t: number) => void;
+  locate?: { id: number; n: number } | null; candidateId?: number | null;
+}) {
   const [q, setQ] = useState('');
   const [kf, setKf] = useState(0);
   const [engineIds, setEngineIds] = useState<number[] | null>(null);
   const [openIds, setOpenIds] = useState<Set<number>>(new Set());
   const [locating, setLocating] = useState<number | null>(null);
+  const counts = useMemo(() => {
+    const result = new Map<number, number>();
+    const count = (id: number): number => {
+      const value = (ds.mgTypes.get(id)?.length ?? 0) + (ds.mgChildren.get(id) ?? []).reduce((sum, child) => sum + count(child), 0);
+      result.set(id, value);
+      return value;
+    };
+    ds.mgRoots.forEach(count);
+    return result;
+  }, [ds]);
   const onToggle = (id: number) => setOpenIds((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   // "Show in market": expand the tree to the type's market group and flash-highlight the row.
   useEffect(() => {
@@ -91,17 +133,18 @@ export function Market({ ds, engine, onPick, onInfo, locate }: { ds: Dataset; en
   const kinds = KIND_FILTERS[kf][1] ?? undefined;
   const base = q.trim().length >= 2 ? (engineIds ?? ds.search(q, 80, KIND_FILTERS[kf][1] ?? undefined)) : [];
   const results = kinds ? base.filter((id) => kinds.includes(ds.kind(id))) : base.slice(0, 80);
+  const showSlot = q.trim().length >= 2 || kf === 0;
   return (
     <div className="market">
       <input className="search" placeholder={tr('Search items (English / 中文)…')} value={q} onChange={(e) => setQ(e.target.value)} />
       <div className="chips">{KIND_FILTERS.map(([l], i) => <button key={l} className={i === kf ? 'on' : ''} onClick={() => setKf(i)}>{tr(l)}</button>)}</div>
       {q.trim().length >= 2 ? (
-        <ul className="tree">{results.map((t) => <TypeRowView key={t} ds={ds} id={t} onPick={onPick} onInfo={onInfo} />)}
+        <ul className="tree">{results.map((t) => <TypeRowView key={t} ds={ds} id={t} onPick={onPick} onPreview={onPreview} onInfo={onInfo} candidateId={candidateId} showSlot={showSlot} />)}
           {!results.length && <li className="muted">{tr('no matches')}</li>}</ul>
       ) : (
-        <ul className="tree">{ds.mgRoots.map((r) => <Node key={r} ds={ds} id={r} onPick={onPick} onInfo={onInfo} depth={0} openIds={openIds} onToggle={onToggle} locating={locating} />)}</ul>
+        <ul className="tree">{ds.mgRoots.map((r) => <Node key={r} ds={ds} id={r} onPick={onPick} onPreview={onPreview} onInfo={onInfo} depth={0} openIds={openIds} onToggle={onToggle} locating={locating} counts={counts} candidateId={candidateId ?? null} showSlot={showSlot} />)}</ul>
       )}
-      <p className="hint">{tr('Click an item to add it to the active fit (or to the projected list when “add to projected” is on). Ships create a new fit.')}</p>
+      <p className="hint">{tr('Single-click to preview; double-click or press Enter to apply. Drag onto the fitting to add.')}</p>
     </div>
   );
 }
