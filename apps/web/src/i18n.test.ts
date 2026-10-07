@@ -1,16 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { ZH } from './i18n-zh';
 import { setUiLang, t } from './i18n';
 import { METRICS } from './fit/metrics';
 
-const SRC = new URL('.', import.meta.url).pathname;
+const SRC = fileURLToPath(new URL('.', import.meta.url));
 const files = (dir: string): string[] => readdirSync(dir).flatMap((f) => {
   const p = join(dir, f);
   return statSync(p).isDirectory() ? (f === 'test' ? [] : files(p)) : /\.tsx?$/.test(f) && !f.includes('.test.') && f !== 'i18n-zh.ts' ? [p] : [];
 });
-const sources = files(SRC).map((p) => ({ p: p.slice(SRC.length), s: readFileSync(p, 'utf8') }));
+const sources = files(SRC).map((p) => ({ p: p.slice(SRC.length).replace(/\\/g, '/'), s: readFileSync(p, 'utf8') }));
 const unq = (q: string) => q.slice(1, -1).replace(/\\(.)/g, '$1');
 
 /** Keys used dynamically (t(variable)): label tables, enum values and templated keys. */

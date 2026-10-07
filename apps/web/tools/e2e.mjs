@@ -4,6 +4,7 @@ import puppeteer from 'puppeteer-core';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const url = process.argv[2] ?? 'http://127.0.0.1:4173/EXFA-App/';
 const engine = process.argv[3] ?? 'wasm-worker';
@@ -53,7 +54,7 @@ const errors = [];
 p.on('pageerror', (e) => errors.push(e.message));
 const results = [];
 // Check names: stable id `web.e2e.<slug>` + description (docs/test-ids.md maps ids to the old names).
-const check = (name, ok, detail = '') => { results.push({ name, ok: !!ok, detail }); };
+const check = (name, ok, detail = '') => { results.push({ name, ok: !!ok, detail }); console.error(`[${results.length}] ${ok ? 'PASS' : 'FAIL'} ${name}`); };
 const stats = () => p.evaluate(() => window.__lastStats);
 const waitNew = async (prev) => { await p.waitForFunction((pr) => window.__lastStats && JSON.stringify(window.__lastStats) !== pr, { timeout: 60000 }, JSON.stringify(prev)); return stats(); };
 const clickText = (sel, text) => p.evaluate((s, t) => { const el = [...document.querySelectorAll(s)].find((e) => e.textContent.trim().startsWith(t)); if (!el) return false; el.click(); return true; }, sel, text);
@@ -63,6 +64,21 @@ const setText = (text) => p.evaluate((t) => {
   set.call(ta, t);
   ta.dispatchEvent(new Event('input', { bubbles: true }));
 }, text);
+// puppeteer has no chord syntax ('Control+a' is playwright-style); hold modifiers manually.
+const pressChord = async (...keys) => { const mods = keys.slice(0, -1); for (const k of mods) await p.keyboard.down(k); await p.keyboard.press(keys.at(-1)); for (const k of mods) await p.keyboard.up(k); };
+// HTML5 drag: page.dragAndDrop was removed from puppeteer; mouse.dragAndDrop is the CDP replacement.
+// It awaits Input.dragIntercepted, which only fires while drag interception is enabled — without
+// setDragInterception(true) it hangs forever. The timeout race keeps a broken drag from stalling the suite.
+const dragSel = async (srcSel, tgtSel) => {
+  const [src, tgt] = await Promise.all([p.waitForSelector(srcSel, { visible: true }), p.waitForSelector(tgtSel, { visible: true })]);
+  const [sb, tb] = await Promise.all([src.boundingBox(), tgt.boundingBox()]);
+  const center = (b) => ({ x: b.x + b.width / 2, y: b.y + b.height / 2 });
+  await p.setDragInterception(true);
+  await Promise.race([
+    p.mouse.dragAndDrop(center(sb), center(tb), { delay: 100 }),
+    new Promise((_, rej) => setTimeout(() => rej(new Error(`dragAndDrop timed out: ${srcSel} -> ${tgtSel}`)), 30000)),
+  ]);
+};
 
 const withQuery = (query) => `${url}${url.includes('?') ? '&' : '?'}${query}`;
 await p.goto(withQuery(`eft=${encodeURIComponent(EFT)}`), { waitUntil: 'networkidle0', timeout: 120000 });
@@ -95,7 +111,7 @@ await p.evaluate(() => { const c = document.querySelector('.toggle input'); c.cl
 await p.type('.market .search', 'Stasis Webifier II');
 await p.waitForFunction(() => [...document.querySelectorAll('.trow .tname')].some((e) => e.textContent === 'Stasis Webifier II'));
 const webRowId = await p.evaluate(() => Number([...document.querySelectorAll('.trow .tname')].find((e) => e.textContent === 'Stasis Webifier II').closest('.trow')?.dataset.tid));
-await p.dragAndDrop(`.market .trow[data-tid="${webRowId}"]`, '.fit-area .fitting');
+await dragSel(`.market .trow[data-tid="${webRowId}"]`, '.fit-area .fitting');
 s = await waitNew(s);
 check('web.e2e.projected-web: projected web slows the ship', s.navigation.max_velocity < v0 * 0.6, `${v0} -> ${s.navigation.max_velocity}`);
 
@@ -373,7 +389,7 @@ await p.click('.market .search');
 await p.keyboard.press('w');
 const modeWhileTyping = await p.$eval('.operation-mode button[aria-pressed="true"]', (el) => el.textContent.trim());
 check('web.e2e.market-hotkey-typing: operation hotkeys do not change mode while typing', modeWhileTyping.startsWith('Smart'), modeWhileTyping);
-await p.keyboard.press('Control+a');
+await pressChord('Control', 'a');
 await p.keyboard.press('Backspace');
 await p.click('.operation-mode button[aria-pressed="true"]');
 await p.keyboard.press('w');
@@ -382,7 +398,7 @@ check('web.e2e.market-hotkey: W selects Replace outside a text field', hotkeyMod
 await clickText('.operation-mode button', 'Smart');
 const marketSearch = async (name) => {
   await p.click('.market .search');
-  await p.keyboard.down('Control'); await p.keyboard.press('a'); await p.keyboard.up('Control');
+  await pressChord('Control', 'a');
   await p.keyboard.press('Backspace');
   await p.type('.market .search', name);
   await p.waitForFunction((n) => [...document.querySelectorAll('.trow .tname')].some((e) => e.textContent.trim() === n), { timeout: 30000 }, name);
@@ -416,7 +432,7 @@ check('web.e2e.market-smart-preview: single-click pins the candidate without cha
     && Math.abs((await stats()).offense?.total?.dps?.total - rd0) < 1e-6
     && await p.$eval('.market .trow.candidate', (el) => !!el) && await p.$eval('.strip-candidate', (el) => !!el),
   `${previewGunRows.join(' | ')}; DPS ${(await stats()).offense?.total?.dps?.total}`);
-await p.click(`.market .trow[data-tid="${gatlingId}"]`, { clickCount: 2 });
+await p.click(`.market .trow[data-tid="${gatlingId}"]`, { count: 2 });
 s = await waitNew(s);
 const replacedGunRows = await fitModuleNames();
 const replaceToast = await p.waitForFunction(() => [...document.querySelectorAll('.toast')].some((el) => /Replaced ×\d+ 200mm AutoCannon II → 125mm Gatling AutoCannon II/.test(el.textContent)), { timeout: 10000 })
@@ -426,12 +442,12 @@ check('web.e2e.market-smart-replace: double-click replaces the selected gun grou
     && replaceToast.includes('Replaced ×2') && replaceToast.includes('Undo'),
   `${replacedGunRows.join(' | ')}; ${replaceToast}`);
 await p.evaluate(() => document.activeElement?.blur());
-await p.keyboard.press('Control+z');
+await pressChord('Control', 'z');
 s = await waitNew(s);
 check('web.e2e.market-ctrl-z: Ctrl+Z restores the replaced guns',
   Math.abs(s.offense?.total?.dps?.total - rd0) < 1e-6 && (await fitModuleNames()).join('|') === originalGunRows.join('|'),
   `${s.offense?.total?.dps?.total}; ${(await fitModuleNames()).join(' | ')}`);
-await p.keyboard.press('Control+y');
+await pressChord('Control', 'y');
 s = await waitNew(s);
 check('web.e2e.market-ctrl-y: Ctrl+Y redoes the market replacement',
   Math.abs(s.offense?.total?.dps?.total - rd0) > 1e-6 && (await fitModuleNames()).some((name) => name.includes('125mm Gatling AutoCannon II')),
@@ -445,14 +461,14 @@ check('web.e2e.market-toast-undo: the replacement toast action restores the prev
 await clickText('.operation-mode button', 'Add');
 const beforeAddCount = await p.evaluate(() => window.__lastRequest?.modules?.length ?? 0);
 await p.click(`.market .trow[data-tid="${gatlingId}"]`);
-await p.click(`.market .trow[data-tid="${gatlingId}"]`, { clickCount: 2 });
+await p.click(`.market .trow[data-tid="${gatlingId}"]`, { count: 2 });
 s = await waitNew(s);
 const afterAddCount = await p.evaluate(() => window.__lastRequest?.modules?.length ?? 0);
 check('web.e2e.market-add: Add mode adds instead of replacing', afterAddCount === beforeAddCount + 1
   && (await fitModuleNames()).some((name) => name.includes('200mm AutoCannon II'))
   && (await fitModuleNames()).some((name) => name.includes('125mm Gatling AutoCannon II')), `${beforeAddCount} -> ${afterAddCount}`);
 await p.evaluate(() => document.activeElement?.blur());
-await p.keyboard.press('Control+z');
+await pressChord('Control', 'z');
 s = await waitNew(s);
 
 const beforeCompareApplyCount = await p.evaluate(() => window.__lastRequest?.modules?.length ?? 0);
@@ -465,13 +481,13 @@ check('web.e2e.market-compare-apply: compare Apply uses Smart semantics even whi
   afterCompareApplyCount === beforeCompareApplyCount && (await fitModuleNames()).some((name) => name.includes('×2') && name.includes('125mm Gatling AutoCannon II')),
   `${beforeCompareApplyCount} -> ${afterCompareApplyCount}; ${(await fitModuleNames()).join(' | ')}`);
 await p.evaluate(() => document.activeElement?.blur());
-await p.keyboard.press('Control+z');
+await pressChord('Control', 'z');
 s = await waitNew(s);
 
 await clickText('.operation-mode button', 'Replace');
 await p.keyboard.press('Escape');
 const beforeInvalidReplace = JSON.stringify(await stats());
-await p.click(`.market .trow[data-tid="${gatlingId}"]`, { clickCount: 2 });
+await p.click(`.market .trow[data-tid="${gatlingId}"]`, { count: 2 });
 const noSelectionToast = await p.waitForFunction(() => [...document.querySelectorAll('.toast')].some((el) => el.textContent.includes('Select a same-slot module first.')), { timeout: 10000 })
   .then(() => p.$$eval('.toast', (els) => els.map((el) => el.textContent).find((text) => text.includes('Select a same-slot module first.')) ?? ''));
 check('web.e2e.market-replace-without-selection: warns and leaves the fit unchanged',
@@ -547,7 +563,7 @@ check('web.e2e.whatif-tab-removed: the four-tab dock uses the compare strip inst
 // ---- fit library (IndexedDB): Pyfa saved-fits database import, folders / tags, rename, duplicate, delete, exports,
 // backup / restore, persistence across reloads, DNA import, migration of the localStorage library ----
 {
-const FIX = new URL('../src/test/fixtures/', import.meta.url).pathname;
+const FIX = fileURLToPath(new URL('../src/test/fixtures/', import.meta.url));
 const pyfaStats = JSON.parse(fs.readFileSync(FIX + 'pyfa-saveddata.stats.json', 'utf8'));
 const libFits = () => p.evaluate(() => [...document.querySelectorAll('.lib-fit')].map((l) => ({ id: l.dataset.fitId, name: l.dataset.fitName, folder: l.closest('details')?.dataset.folder ?? null, tags: [...l.querySelectorAll('.tag')].map((x) => x.textContent) })));
 // name, or { id } (names are not unique: the XML re-import below adds a second "Pyfa Vexor")
@@ -620,9 +636,13 @@ await p.waitForSelector('.toast button:not(.toast-dismiss)', { timeout: 10000 })
 const immediatelyDeleted = await p.waitForFunction((id) => ![...document.querySelectorAll('.lib-fit')].some((x) => x.dataset.fitId === id), { timeout: 10000 }, dup?.id).then(() => true).catch(() => false);
 const deleteToast = await p.$$eval('.toast', (els, name) => els.map((el) => el.textContent ?? '').find((text) => text.includes(`Deleted “${name}”`)) ?? '', dup?.name);
 const namedDeleteNotice = deleteToast.includes(`Deleted “${dup?.name}”`);
-await p.click('.toast button:not(.toast-dismiss)');
+// click the Undo action inside the delete toast specifically (other toasts may still be around)
+await p.evaluate((name) => {
+  const t = [...document.querySelectorAll('.toast')].find((el) => el.textContent.includes(`Deleted “${name}”`));
+  t?.querySelector('button:not(.toast-dismiss)')?.click();
+}, dup?.name);
 const restored = await p.waitForFunction((id) => [...document.querySelectorAll('.lib-fit')].some((x) => x.dataset.fitId === id), { timeout: 10000 }, dup?.id).then(() => true).catch(() => false);
-await p.evaluate((id) => document.querySelector(`.lib-fit[data-fit-id="${id}"] .lib-del`).click(), dup?.id);
+await p.evaluate((id) => document.querySelector(`.lib-fit[data-fit-id="${id}"] .lib-del`)?.click(), dup?.id);
 await p.waitForFunction((id) => ![...document.querySelectorAll('.lib-fit')].some((x) => x.dataset.fitId === id), { timeout: 10000 }, dup?.id);
 lf = await libFits();
 check('web.e2e.library-duplicate-delete: duplicate keeps folder and tags; delete is immediate and Undo restores it',

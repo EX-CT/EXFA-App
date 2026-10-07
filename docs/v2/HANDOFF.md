@@ -39,23 +39,28 @@ Verified at the time of this snapshot:
 
 - `npx tsc -b` passes, `npx vitest run` 48/48 passes, `npx vite build` passes.
 - `node tools/smoke.mjs <url> wasm-worker` passes (Rifter, engine 0.2.0).
+- `node tools/e2e.mjs http://127.0.0.1:4173/EXFA-App/ wasm-worker` passes 105/105 (headless Chrome on Windows and Linux).
+- Rendered review done (1920×1080 + 1600×900, `node tools/shots.mjs <url> <outdir>`): compact market with badges,
+  autocannon selected with Variations deltas, overpowered candidate red frame + tooltip, Afterburner selected + MWD
+  candidate (speed / sig / cap deltas), replace toast with Undo.
+
+Stage B bug fixes in the test tooling itself (the suite had never run to completion):
+
+- `page.dragAndDrop` was removed from puppeteer — the market drag now goes through `mouse.dragAndDrop` behind
+  `page.setDragInterception(true)` (required, or it waits on `Input.dragIntercepted` forever).
+- Playwright-style chords (`press('Control+a')`) replaced by `pressChord` (down/press/up).
+- Double-clicks used the removed `{ clickCount: 2 }` option — now `{ count: 2 }`.
+- The overfit-validation scenario applied market rows with a single click — now a double-click under Add mode.
+- Windows paths: `new URL(...).pathname` → `fileURLToPath` in `e2e.mjs` (fixtures) and `i18n.test.ts`.
 
 Still to do for Stage B:
 
-1. Run the full e2e and fix whatever fails: `CHROME=<chrome path> node tools/e2e.mjs http://127.0.0.1:4173/EXFA-App/ wasm-worker`
-   (serve the build with `npx vite preview --port 4173`). The last run was interrupted; the "projected" scenario was just
-   switched from click to drag-and-drop because single-click no longer applies.
-2. Rendered review + screenshots (1920×1080 and 1600×900): compact market with badges; autocannon selected with Variations
-   deltas; Replace candidate with red frame + tooltip; Afterburner selected + MWD candidate (speed / sig / cap deltas);
-   replace toast with Undo. Check them by eye, not only by DOM.
-3. `git diff --check`, review, open the Stage B PR, CI green, merge, Pages deploy.
+1. `git diff --check`, review, CI green, merge PR #2, Pages deploy.
 
 ## Known issues outside this branch
 
-- Pages deploy has failed since Stage A merged: the bench `formats` gate scored 0/4779 because `tools/browser-rpc.mjs`
-  wrapped the format RPC envelope in a second `result`. Fix branch `devin/1791378812-fix-pages-formats-rpc` (separate PR).
-  Until it lands, the live site is still the pre-Stage-A build.
-- `CHROME` defaults to `/usr/bin/google-chrome` in all browser tools; on the Devin VM Chrome is `/home/ubuntu/.local/bin/google-chrome`.
+- `CHROME` defaults to `/usr/bin/google-chrome` in all browser tools; point it at the local Chrome (Windows:
+  `C:/Program Files/Google/Chrome/Application/chrome.exe`; Devin VM: `/home/ubuntu/.local/bin/google-chrome`).
 
 ## Next stages (not started)
 

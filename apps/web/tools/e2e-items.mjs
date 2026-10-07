@@ -62,11 +62,13 @@ export async function itemChecks({ p, withQuery, check, stats, waitNew, clickTex
   // validation (F 2da8150): the formats layer drops what Pyfa would not fit, so the illegal items come from the market
   // (which adds them as asked): capital module on a frigate, a fifth gun (4 highs, 3 turrets), a medium rig, overloads
   s = await load('[Rifter, E2E Overfit]\n\nLarge Shield Extender II\nLarge Shield Extender II\nLarge Shield Extender II\n\n200mm AutoCannon II\n200mm AutoCannon II\n200mm AutoCannon II\n', 'Rifter');
+  // Stage B: single-click only previews — applying a market row needs a double-click (or Enter)
+  await clickText('.operation-mode button', 'Add');
   const market = async (name) => {
     await clickText('.left .tabs button', 'Market');
     await p.evaluate((n) => { const i = document.querySelector('.market .search'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(i, n); i.dispatchEvent(new Event('input', { bubbles: true })); }, name);
     await p.waitForFunction((n) => [...document.querySelectorAll('.market .tname')].some((e) => e.textContent === n), { timeout: 10000 }, name).catch(() => null);
-    const ok = await p.evaluate((n) => { const e = [...document.querySelectorAll('.market .tname')].find((x) => x.textContent === n); e?.click(); return !!e; }, name);
+    const ok = await p.evaluate((n) => { const e = [...document.querySelectorAll('.market .tname')].find((x) => x.textContent === n); e?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); return !!e; }, name);
     if (ok) s = await waitNew(s).catch(() => s);
     return ok;
   };
