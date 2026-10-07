@@ -41,10 +41,11 @@ async function handle(line, asBatch) {
         const f = params.fit ?? {};
         const st = await e.calc({ ...f, options: { ...(f.options ?? {}), include_attributes: 'all', full_precision: true, default_spool: { type: 'spool_scale', amount: 0 } }, modules: (f.modules ?? []).map((m) => ({ ...m, spool: null })) });
         if (st?.error) return st;
-        return e.rpcRaw(method, { ...params, stats_json: JSON.stringify(st) });
+        return { __raw: await e.rpcRaw(method, { ...params, stats_json: JSON.stringify(st) }) };
       }
+      // rpcRaw gives the whole {id, result|error} envelope: pass it through, not wrapped in another result
       if (['eft_parse', 'eft_export', 'format_import', 'format_export'].includes(method))
-        return e.rpcRaw(method, params);
+        return { __raw: await e.rpcRaw(method, params) };
       // anything else (batch, prices_load, version, ...): the engine's own RPC, response passed through as is
       if (e.rpcText) return { __text: await e.rpcText(method, params) };
       if (e.rpcRaw) return { __raw: await e.rpcRaw(method, params) };
