@@ -5,13 +5,13 @@ import { Dataset } from './data/dataset';
 import { createEngine, enginePricesLoad, type Engine, type FitStats } from './engine/adapter';
 import { fetchLatestSnapshot, loadPriceSettings, savePriceSettings, PRICE_REFRESH_MS, SNAPSHOT_URL, type PriceSettings } from './data/prices';
 import { importFit, setEngineFormatsRpc } from './formats';
-import { addItemToFit, newFit, toRequest, type Fit, type Library } from './fit/model';
+import { applyMarketPick, newFit, toRequest, uid, type Fit, type Library, type MarketMode, type MarketSelection } from './fit/model';
 import { useAppState } from './store';
 import { CharacterEditor } from './ui/Character';
 import { Fitting } from './ui/Fitting';
 import { Graphs } from './ui/Graphs';
 import { Compare } from './ui/Compare';
-import { WhatIf } from './ui/WhatIf';
+import { CompareStrip, type StripTab } from './ui/CompareStrip';
 import { ImportExport } from './ui/ImportExport';
 import { ItemInfo, Market, type InfoCtx } from './ui/Market';
 import { FitBrowser } from './ui/FitBrowser';
@@ -57,7 +57,10 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [ms, setMs] = useState<number | null>(null);
   const [left, setLeft] = useState<'market' | 'fits' | 'char' | 'profiles'>('market');
-  const [dockTab, setDockTab] = useState<'strip' | 'graphs' | 'compare' | 'import-export' | 'whatif'>('strip');
+  const [dockTab, setDockTab] = useState<'strip' | 'graphs' | 'compare' | 'import-export'>('strip');
+  const [stripTab, setStripTab] = useState<StripTab>('variations');
+  const [sel, setSel] = useState<MarketSelection>(null);
+  const [candidateId, setCandidateId] = useState<number | null>(null);
   const [infoState, setInfoState] = useState<{ id: number; ctx?: InfoCtx } | null>(null);
   const [fitted, setFitted] = useState<Record<string, number> | null | undefined>(undefined);
   const [fittedNote, setFittedNote] = useState<string | undefined>(undefined);
@@ -92,6 +95,7 @@ export default function App() {
   const injectedSnapId = useRef<string | null>(null);
   const { lib, settings } = state;
   const fit = settings.activeFitId ? lib.fits[settings.activeFitId] ?? null : null;
+  useEffect(() => { setSel(null); setCandidateId(null); setStripTab('variations'); }, [fit?.id]);
 
   // Dataset and Engine initialize independently so the shell can report each startup phase.
   useEffect(() => {
@@ -129,11 +133,11 @@ export default function App() {
   const stateRef = useRef(state); stateRef.current = state;
   const hist = useRef<Record<string, { past: Fit[]; future: Fit[]; at: number }>>({});
   const [, setHistTick] = useState(0);
-  const setFit = useCallback((f: Fit) => {
+  const setFit = useCallback((f: Fit, checkpoint = false) => {
     const prev = stateRef.current.lib.fits[f.id];
     const h = (hist.current[f.id] ??= { past: [], future: [], at: 0 });
     const now = Date.now();
-    if (prev && now - h.at > 400) { h.past.push(prev); if (h.past.length > 100) h.past.shift(); }
+    if (prev && (checkpoint || now - h.at > 400)) { h.past.push(prev); if (h.past.length > 100) h.past.shift(); }
     h.at = now; h.future = [];
     putFit(f); setHistTick((x) => x + 1);
   }, [putFit]);
@@ -150,14 +154,21 @@ export default function App() {
   }, [putFit]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!(e.ctrlKey || e.metaKey) || (e.target as HTMLElement)?.closest?.('input, textarea, select')) return;
+      const typing = (e.target as HTMLElement)?.closest?.('input, textarea, select, [contenteditable=true]');
+      if (e.key === 'Escape') { setSel(null); return; }
+      if (!typing && !(e.ctrlKey || e.metaKey)) {
+        const modes: Record<string, MarketMode> = { q: 'smart', w: 'replace', e: 'add' };
+        const mode = modes[e.key.toLowerCase()];
+        if (mode) { update((s) => ({ ...s, settings: { ...s.settings, marketMode: mode } })); return; }
+      }
+      if (!(e.ctrlKey || e.metaKey) || typing) return;
       const k = e.key.toLowerCase();
       if (k === 'z' && !e.shiftKey) { e.preventDefault(); undoRedo('undo'); }
       else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); undoRedo('redo'); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [undoRedo]);
+  }, [undoRedo, update]);
   const addFit = useCallback((f: Fit) => { const now = new Date().toISOString(); f = { ...f, created: f.created ?? now, modified: f.modified ?? now }; update((s) => ({ ...s, lib: { ...s.lib, fits: { ...s.lib.fits, [f.id]: f } }, settings: { ...s.settings, activeFitId: f.id } })); }, [update]);
 
   // First visit / share link: format input is parsed by the Engine worker before the first calc.
@@ -269,13 +280,51 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [infoState, reqJson]);
 
-  const pick = (id: number) => {
+  const previewPick = (id: number) => {
+    setCandidateId(id);
+    setDockTab('strip');
+  };
+  const pick = (id: number, mode: MarketMode = settings.marketMode) => {
     if (!ds) return;
-    const k = ds.kind(id);
-    if (k === 'ship' || k === 'structure') { addFit(newFit(id, `${ds.name(id, 'en')} fit`)); return; }
-    if (!fit) return;
-    const next = addItemToFit(ds, fit, id, addProjected);
-    if (next) setFit(next); else setInfo(id);
+    if (!fit) {
+      if (ds.isShip(id)) addFit(newFit(id, `${ds.name(id, 'en')} fit`));
+      else setInfo(id);
+      setCandidateId(null);
+      return;
+    }
+    const result = applyMarketPick(ds, fit, sel, id, mode);
+    if (result.note?.kind === 'warning') {
+      const messages: Record<string, string> = {
+        'select-same-slot': 'Select a same-slot module first.',
+        'slot-mismatch': 'Slot mismatch; this module cannot replace the selection.',
+        'cannot-fit': 'This item cannot be added to the fit.',
+      };
+      notify({ kind: 'warn', text: t(messages[result.note.reason]) });
+      return;
+    }
+    if (result.note?.kind === 'new-ship') addFit({ ...result.fit, id: uid() });
+    else if (result.fit !== fit) setFit(result.fit, true);
+    setSel(result.sel);
+    let message = '';
+    if (result.note?.kind === 'replaced') {
+      message = `${t('Replaced')} ×${result.note.count} ${ds.name(result.note.from)} → ${ds.name(result.note.to)} · ${t('Ctrl+Z to undo')}`;
+    } else if (result.note?.kind === 'added') message = `${t('Added')} ${ds.name(result.note.typeId)}`;
+    else if (result.note?.kind === 'loaded') message = `${t('Loaded')} ${ds.name(result.note.typeId)}`;
+    else if (result.note?.kind === 'new-ship') message = `${t('New fit')}: ${ds.name(id)}`;
+    if (message) notify({ kind: 'ok', text: message, action: result.note?.kind === 'new-ship' ? undefined : { label: t('Undo'), onClick: () => undoRedo('undo') } });
+    setCandidateId(null);
+  };
+  const selectFitted = (id: number, selection: MarketSelection, ctx?: InfoCtx) => {
+    setSel((current) => current?.list === selection?.list && current?.index === selection?.index ? null : selection);
+    locateType(id, ctx);
+    setStripTab('variations');
+    setDockTab('strip');
+  };
+  const openVariations = (id: number, selection: MarketSelection, ctx?: InfoCtx) => {
+    setSel(selection);
+    locateType(id, ctx);
+    setStripTab('variations');
+    setDockTab('strip');
   };
   const writeBackAdjustments = () => {
     if (!fit || !stats?.adjustments?.length) return;
@@ -369,6 +418,12 @@ export default function App() {
           </Popover>}
         </div>
         <span className="header-meta">{ds ? `SDE ${ds.build}${ds.raw.dataset_revision ? ` r${ds.raw.dataset_revision}` : ''} · ${engineStatus}` : `${loadMsg} · ${engineStatus}`}</span>
+        <div className="operation-mode" role="group" aria-label={t('Operation mode')}>
+          {(['smart', 'replace', 'add'] as const).map((mode, i) => <button key={mode} className={settings.marketMode === mode ? 'on' : ''}
+            aria-pressed={settings.marketMode === mode} onClick={() => update((s) => ({ ...s, settings: { ...s.settings, marketMode: mode } }))}>
+            {t(({ smart: 'Smart', replace: 'Replace', add: 'Add' })[mode])} <kbd>{['Q', 'W', 'E'][i]}</kbd>
+          </button>)}
+        </div>
         <button className="undo" title={t('Undo (Ctrl+Z)')} disabled={!(fit && hist.current[fit.id]?.past.length)} onClick={() => undoRedo('undo')}>{t('↶ Undo')}</button>
         <button className="redo" title={t('Redo (Ctrl+Y)')} disabled={!(fit && hist.current[fit.id]?.future.length)} onClick={() => undoRedo('redo')}>{t('↷ Redo')}</button>
         <select value={settings.lang} onChange={(e) => setLang(e.target.value as 'en' | 'zh')}><option value="en">English</option><option value="zh">中文</option></select>
@@ -382,7 +437,7 @@ export default function App() {
           <Tabs tabs={[[ 'market', t('Market')], ['fits', `${t('Fits')} (${Object.keys(lib.fits).length})`], ['char', t('Character')], ['profiles', t('Profiles')]]} value={left} onChange={setLeft} />
           <div className="leftbody">
           {!ds ? <div className="skeleton-list"><i /><i /><i /><i /><i /><i /><i /></div> : <>
-          {left === 'market' && <Market ds={ds} engine={engineReady ? engineRef.current : null} onPick={pick} onInfo={setInfo} locate={locate} />}
+          {left === 'market' && <Market ds={ds} engine={engineReady ? engineRef.current : null} onPick={pick} onPreview={previewPick} onInfo={setInfo} locate={locate} candidateId={candidateId} />}
           {left === 'fits' && <FitBrowser ds={ds} lib={lib} activeId={fit?.id ?? null} status={storeStatus}
             onOpen={(id) => update((s) => ({ ...s, settings: { ...s.settings, activeFitId: id } }))} onLib={setLib} onInfo={locateType} />}
           {left === 'char' && <CharacterEditor ds={ds} lib={lib} fit={fit} onLib={setLib} onFit={setFit} />}
@@ -407,7 +462,8 @@ export default function App() {
         <section className="center">
           <div className="fit-area">
             {!ds ? <div className="skeleton-fit"><i /><i /><i /><i /><i /><i /><i /><i /></div>
-              : fit ? <Fitting ds={ds} fit={fit} lib={lib} stats={stats} onChange={setFit} onInfo={locateType} addProjected={addProjected} setAddProjected={setAddProjected} />
+              : fit ? <Fitting ds={ds} fit={fit} lib={lib} stats={stats} onChange={setFit} onInfo={locateType} addProjected={addProjected} setAddProjected={setAddProjected}
+                selection={sel} onSelect={(id, selection, ctx) => selectFitted(id, selection, ctx)} onOpenVariations={(id, selection, ctx) => openVariations(id, selection, ctx)} />
                 : <p className="muted">{t('No fit selected.')}</p>}
           </div>
           <div className="dock-resize" onPointerDown={(e) => beginResize(e, 'dock')} onDoubleClick={() => updateSettings({ dockCollapsed: !settings.dockCollapsed })} title={t('Drag to resize dock')} />
@@ -415,13 +471,27 @@ export default function App() {
             <div className="dock-head">
               <Tabs tabs={[
                 ['strip', t('Compare strip')], ['graphs', t('Graphs')], ['compare', t('Fit compare')],
-                ['import-export', t('Import-export')], ['whatif', t('What-if')],
+                ['import-export', t('Import-export')],
               ]} value={dockTab} onChange={setDockTab} />
               <button className="mini dock-collapse" onClick={() => updateSettings({ dockCollapsed: !settings.dockCollapsed })} title={settings.dockCollapsed ? t('Expand dock') : t('Collapse dock')}>{settings.dockCollapsed ? '▴' : '▾'}</button>
             </div>
             {!settings.dockCollapsed && <div className="dock-content">
               {!ds ? <div className="skeleton-list"><i /><i /><i /><i /></div>
-                : dockTab === 'strip' ? <div className="dock-placeholder muted">{t('Compare strip placeholder')}</div>
+                : dockTab === 'strip' ? <CompareStrip ds={ds} fit={fit} lib={lib} engine={engineReady ? engineRef.current : null} stats={stats}
+                  tab={stripTab} onTab={setStripTab}
+                  sel={sel} candidateId={candidateId} mode={settings.marketMode} pins={settings.metricPins} priceOverrides={priceSet.mine}
+                  onTogglePin={(category, key) => update((s) => {
+                    const current = s.settings.metricPins[category] ?? [];
+                    const next = current.includes(key) ? current.filter((item) => item !== key) : [...current, key];
+                    return { ...s, settings: { ...s.settings, metricPins: { ...s.settings.metricPins, [category]: next } } };
+                  })}
+                  onMarketApply={(id) => pick(id, settings.marketMode === 'replace' ? 'replace' : 'smart')}
+                  onApplyFit={(next, label) => {
+                    if (!fit) return;
+                    setFit({ ...next, id: fit.id }, true);
+                    notify({ kind: 'ok', text: `${t('Applied')} ${label} · ${t('Ctrl+Z to undo')}`,
+                      action: { label: t('Undo'), onClick: () => undoRedo('undo') } });
+                  }} />
                   : dockTab === 'graphs' ? fit
                     ? <Graphs st={stats} target={lib.targetProfiles[fit.target_profile_id]} engine={engineReady ? engineRef.current : null} request={request} engineReady={engineReady} lib={lib} fitId={fit.id} />
                     : <p className="muted">{t('No fit selected.')}</p>
@@ -429,8 +499,7 @@ export default function App() {
                       : dockTab === 'import-export' ? <ImportExport ds={ds} fit={fit} lib={lib} stats={stats}
                         calc={engineReady && engineRef.current ? (r) => engineRef.current!.calc(r) : null}
                         onImport={(f) => addFit(f)} />
-                        : fit ? <WhatIf ds={ds} fit={fit} lib={lib} engine={engineReady ? engineRef.current : null} onApply={setFit} />
-                          : <p className="muted">{t('No fit selected.')}</p>}
+                        : <p className="muted">{t('No fit selected.')}</p>}
             </div>}
           </section>
         </section>

@@ -30,6 +30,15 @@ export interface Fit {
   /** fit library: folder path ("PvP/Frigates", "" or absent = top level), free tags, timestamps (ISO) */
   folder?: string; tags?: string[]; created?: string; modified?: string;
 }
+export type MarketMode = 'smart' | 'replace' | 'add';
+export type MarketSelection = { list: 'modules' | 'drones' | 'fighters' | 'cargo'; index: number } | null;
+export type MarketPickNote =
+  | { kind: 'added'; typeId: number }
+  | { kind: 'loaded'; typeId: number }
+  | { kind: 'replaced'; from: number; to: number; count: number }
+  | { kind: 'new-ship' }
+  | { kind: 'warning'; reason: 'select-same-slot' | 'slot-mismatch' | 'cannot-fit' };
+export interface MarketPickResult { fit: Fit; sel: MarketSelection; note: MarketPickNote | null }
 export interface Character { id: string; name: string; default_level: number; levels: Record<string, number>; security_status?: number | null; builtin?: boolean;
   /** Alpha clone: engine caps every skill at its Alpha level (Pyfa alphaCloneID). */
   alpha_clone?: boolean }
@@ -42,9 +51,9 @@ export const uid = () => Math.random().toString(36).slice(2, 10);
 /** type id of the market item being dragged (set on dragstart; HTML5 dragover can't read payload data) */
 export const draggedType = { id: null as number | null };
 
-export function newFit(ship: number, name = 'New fit'): Fit {
+export function newFit(ship: number, name = 'New fit', id = uid()): Fit {
   return {
-    id: uid(), name, ship_type_id: ship, mode_type_id: null, modules: [], drones: [], fighters: [], implants: [], boosters: [],
+    id, name, ship_type_id: ship, mode_type_id: null, modules: [], drones: [], fighters: [], implants: [], boosters: [],
     cargo: [], projected: [], fleet: { booster_fit_ids: [], buffs: [] }, environment: [], system_security: null,
     character_id: 'all5', damage_pattern_id: 'uniform', target_profile_id: 'none',
     options: { factor_reload: false, spool: 1, rah: 'adapt' },
@@ -144,6 +153,93 @@ export function addItemToFit(ds: Dataset, fit: Fit, id: number, projected = fals
     case 'booster': { const s = ds.attr(id, 'boosterness'); return { ...fit, boosters: [...fit.boosters.filter((b) => ds.attr(b.type_id, 'boosterness') !== s), { type_id: id }] }; }
     default: return null;
   }
+}
+
+export function applyMarketPick(ds: Dataset, fit: Fit, sel: MarketSelection, typeId: number, mode: MarketMode): MarketPickResult {
+  const unchanged = (reason: Extract<MarketPickNote, { kind: 'warning' }>['reason']): MarketPickResult =>
+    ({ fit, sel, note: { kind: 'warning', reason } });
+  const added = (next: Fit | null, replaced?: number, selection: MarketSelection = sel): MarketPickResult =>
+    next ? { fit: next, sel: selection, note: replaced == null ? { kind: 'added', typeId } : { kind: 'replaced', from: replaced, to: typeId, count: 1 } }
+      : unchanged('cannot-fit');
+  if (ds.isShip(typeId)) return {
+    fit: newFit(typeId, `${ds.name(typeId, 'en')} fit`, `market-${fit.id}-${typeId}`),
+    sel: null, note: { kind: 'new-ship' },
+  };
+
+  const kind = ds.kind(typeId);
+  if (kind === 'module' || kind === 'subsystem') {
+    const selected = sel?.list === 'modules' ? fit.modules[sel.index] : undefined;
+    const sameSlot = !!selected && ds.slot(typeId) === selected.slot;
+    if (mode === 'replace' && !selected) return unchanged('select-same-slot');
+    if (mode === 'replace' && selected && !sameSlot) return unchanged('slot-mismatch');
+    if (selected && sameSlot && mode !== 'add') {
+      const indexes = selected.group == null
+        ? [sel!.index]
+        : fit.modules.flatMap((m, i) => m.group === selected.group ? [i] : []);
+      const modules = fit.modules.map((m, i) => {
+        if (!indexes.includes(i)) return m;
+        return {
+          ...m,
+          type_id: typeId,
+          state: m.state === 'offline' ? 'offline' : defaultState(ds, typeId),
+          charge_type_id: m.charge_type_id != null && ds.chargesFor(typeId).includes(m.charge_type_id) ? m.charge_type_id : null,
+          mutation: null,
+        };
+      });
+      return { fit: { ...fit, modules }, sel, note: { kind: 'replaced', from: selected.type_id, to: typeId, count: indexes.length } };
+    }
+    let replaced: number | undefined;
+    let replacedIndex = -1;
+    if (kind === 'subsystem') {
+      const slot = ds.attr(typeId, 'subSystemSlot');
+      replacedIndex = fit.modules.findIndex((m) => m.slot === 'subsystem' && ds.attr(m.type_id, 'subSystemSlot') === slot);
+      replaced = replacedIndex < 0 ? undefined : fit.modules[replacedIndex].type_id;
+    }
+    const next = addItemToFit(ds, fit, typeId);
+    const selection = next && sel?.list === 'modules' && replacedIndex >= 0
+      ? { ...sel, index: sel.index === replacedIndex ? next.modules.length - 1 : sel.index > replacedIndex ? sel.index - 1 : sel.index }
+      : sel;
+    return added(next, replaced, selection);
+  }
+
+  if (kind === 'charge') {
+    const selected = sel?.list === 'modules' ? fit.modules[sel.index] : undefined;
+    if (mode !== 'add' && selected && ds.chargesFor(selected.type_id).includes(typeId)) {
+      const indexes = selected.group == null
+        ? [sel!.index]
+        : fit.modules.flatMap((m, i) => m.group === selected.group ? [i] : []);
+      const modules = fit.modules.map((m, i) => indexes.includes(i) && ds.chargesFor(m.type_id).includes(typeId)
+        ? { ...m, charge_type_id: typeId } : m);
+      return { fit: { ...fit, modules }, sel, note: { kind: 'loaded', typeId } };
+    }
+    const next = addItemToFit(ds, fit, typeId);
+    if (!next) return unchanged('cannot-fit');
+    return { fit: next, sel, note: fit.modules.some((m) => ds.chargesFor(m.type_id).includes(typeId)) ? { kind: 'loaded', typeId } : { kind: 'added', typeId } };
+  }
+
+  if (kind === 'drone' && mode !== 'add' && sel?.list === 'drones' && fit.drones[sel.index]) {
+    const current = fit.drones[sel.index];
+    const drones = fit.drones.map((d, i) => i === sel.index ? { ...d, type_id: typeId, mutation: null } : d);
+    return { fit: { ...fit, drones }, sel, note: { kind: 'replaced', from: current.type_id, to: typeId, count: 1 } };
+  }
+
+  if (kind === 'fighter' && mode !== 'add' && sel?.list === 'fighters' && fit.fighters[sel.index]) {
+    const current = fit.fighters[sel.index];
+    const max = ds.attr(typeId, 'fighterSquadronMaxSize') ?? current.quantity;
+    const fighters = fit.fighters.map((f, i) => i === sel.index
+      ? { ...f, type_id: typeId, quantity: Math.min(f.quantity, max), abilities: null } : f);
+    return { fit: { ...fit, fighters }, sel, note: { kind: 'replaced', from: current.type_id, to: typeId, count: 1 } };
+  }
+
+  let replaced: number | undefined;
+  if (kind === 'implant') {
+    const slot = ds.attr(typeId, 'implantness');
+    replaced = fit.implants.find((x) => ds.attr(x, 'implantness') === slot);
+  } else if (kind === 'booster') {
+    const slot = ds.attr(typeId, 'boosterness');
+    replaced = fit.boosters.find((b) => ds.attr(b.type_id, 'boosterness') === slot)?.type_id;
+  }
+  return added(addItemToFit(ds, fit, typeId), replaced);
 }
 
 export function moveModule(fit: Fit, from: number, to: number | null): Fit {
