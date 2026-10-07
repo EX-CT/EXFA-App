@@ -1,6 +1,7 @@
 # EXFA v2 — handoff status
 
 Snapshot of where the v2 upgrade stands, so work can resume from a fresh clone.
+Cross-repo status (Engine, Data, Bench, Format, known CI/deploy issues): EX-CT/EXFA-Docs `docs/27-v2-handoff.md`.
 Source documents in this folder:
 
 - `design.md` — the approved v2 design (Chinese), incl. the 8 decisions the owner answered.
@@ -48,6 +49,13 @@ Still to do for Stage B:
    deltas; Replace candidate with red frame + tooltip; Afterburner selected + MWD candidate (speed / sig / cap deltas);
    replace toast with Undo. Check them by eye, not only by DOM.
 3. `git diff --check`, review, open the Stage B PR, CI green, merge, Pages deploy.
+
+## Known issues outside this branch
+
+- Pages deploy has failed since Stage A merged: the bench `formats` gate scored 0/4779 because `tools/browser-rpc.mjs`
+  wrapped the format RPC envelope in a second `result`. Fix branch `devin/1791378812-fix-pages-formats-rpc` (separate PR).
+  Until it lands, the live site is still the pre-Stage-A build.
+- `CHROME` defaults to `/usr/bin/google-chrome` in all browser tools; on the Devin VM Chrome is `/home/ubuntu/.local/bin/google-chrome`.
 
 ## Next stages (not started)
 
