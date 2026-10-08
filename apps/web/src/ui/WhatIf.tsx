@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { Dataset } from '../data/dataset';
 import type { Engine, FitStats } from '../engine/adapter';
 import { METRICS, metric } from '../fit/metrics';
-import { toRequest, type Fit, type Library } from '../fit/model';
+import { requestFor, type FitDoc, type Library } from '../fit/model';
 import { applyEdits, characterScenarios, chargeScenarios, offlineScenarios, variationScenarios, type Scenario } from '../fit/whatif';
 import { t } from '../i18n';
 import { fmt } from './common';
@@ -12,12 +12,12 @@ import { fmt } from './common';
 type Mode = 'variations' | 'charges' | 'offline' | 'character';
 const SHOWN = ['dps', 'ehp', 'tank', 'cap_delta', 'speed', 'align', 'cpu_left', 'pg_left'];
 
-export function WhatIf({ ds, fit, lib, engine, onApply }: { ds: Dataset; fit: Fit; lib: Library; engine: Engine | null; onApply: (f: Fit) => void }) {
+export function WhatIf({ ds, fit, lib, engine, onApply }: { ds: Dataset; fit: FitDoc; lib: Library; engine: Engine | null; onApply: (f: FitDoc) => void }) {
   const [mode, setMode] = useState<Mode>('variations');
-  const firstLoaded = Math.max(0, fit.modules.findIndex((m) => m.charge_type_id));
+  const firstLoaded = Math.max(0, fit.fit.modules.findIndex((m) => m.charge_type_id));
   const [index, setIndex] = useState(0);
   const [sortBy, setSortBy] = useState('dps');
-  const idx = Math.min(index, Math.max(0, fit.modules.length - 1));
+  const idx = Math.min(index, Math.max(0, fit.fit.modules.length - 1));
   const scenarios = useMemo<Scenario[]>(() => {
     switch (mode) {
       case 'variations': return variationScenarios(ds, fit, idx);
@@ -27,7 +27,7 @@ export function WhatIf({ ds, fit, lib, engine, onApply }: { ds: Dataset; fit: Fi
     }
   }, [mode, idx, fit, ds, lib.characters]);
   const variants = useMemo(() => scenarios.slice(0, 60).map((s) => ({ s, fit: applyEdits(ds, fit, s.edits) })), [scenarios, ds, fit]);
-  const reqs = useMemo(() => [toRequest(fit, lib), ...variants.map((v) => toRequest(v.fit, lib))], [variants, fit, lib]);
+  const reqs = useMemo(() => [requestFor(lib, fit), ...variants.map((v) => requestFor(lib, v.fit))], [variants, fit, lib]);
   const key = JSON.stringify(reqs);
   const [res, setRes] = useState<{ key: string; stats: (FitStats | null)[]; ms: number } | null>(null);
   useEffect(() => {
@@ -55,13 +55,13 @@ export function WhatIf({ ds, fit, lib, engine, onApply }: { ds: Dataset; fit: Fi
   return (
     <div className="whatif">
       <div className="row">
-        <select className="wi-mode" value={mode} onChange={(e) => { const v = e.target.value as Mode; setMode(v); if (v === 'charges' && !fit.modules[idx]?.charge_type_id) setIndex(firstLoaded); }}>
+        <select className="wi-mode" value={mode} onChange={(e) => { const v = e.target.value as Mode; setMode(v); if (v === 'charges' && !fit.fit.modules[idx]?.charge_type_id) setIndex(firstLoaded); }}>
           <option value="variations">{t('Module variations')}</option><option value="charges">{t('Charges')}</option>
           <option value="offline">{t('Each module offline')}</option><option value="character">{t('Characters')}</option>
         </select>
         {(mode === 'variations' || mode === 'charges') && (
           <select className="wi-module" value={idx} onChange={(e) => setIndex(+e.target.value)}>
-            {fit.modules.map((m, i) => <option key={i} value={i}>{i + 1}. {ds.name(m.type_id)}{m.charge_type_id ? ` · ${ds.name(m.charge_type_id)}` : ''}</option>)}
+            {fit.fit.modules.map((m, i) => <option key={i} value={i}>{i + 1}. {ds.name(m.type_id)}{m.charge_type_id ? ` · ${ds.name(m.charge_type_id)}` : ''}</option>)}
           </select>
         )}
         <label>{t('sort by')} <select className="wi-sort" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>{METRICS.filter((m) => m.better).map((m) => <option key={m.key} value={m.key}>{t(m.label)}</option>)}</select></label>

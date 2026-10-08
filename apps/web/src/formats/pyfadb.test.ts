@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { importPyfaDb, isSqlite } from './pyfadb';
 import { libraryFromStructured } from './index';
-import { toRequest, type Library } from '../fit/model';
+import { emptyLibrary, requestFor, type Library } from '../fit/model';
 import { BUILTIN_CHARACTERS, BUILTIN_DAMAGE, BUILTIN_TARGETS } from '../data/presets';
 import { id, miniDataset } from '../test/fixture';
 
@@ -12,8 +12,9 @@ const DB = new Uint8Array(readFileSync(here('../test/fixtures/pyfa-saveddata.db'
 // sql.js is hoisted to the monorepo root node_modules by npm workspaces
 const SQL_WASM = { binary: readFileSync(fileURLToPath(import.meta.resolve('sql.js/dist/sql-wasm.wasm'))).buffer as ArrayBuffer };
 const emptyLib = (): Library => ({
-  fits: {}, characters: Object.fromEntries(BUILTIN_CHARACTERS.map((c) => [c.id, c])),
-  damagePatterns: Object.fromEntries(BUILTIN_DAMAGE.map((d) => [d.id, d])), targetProfiles: Object.fromEntries(BUILTIN_TARGETS.map((t) => [t.id, t])),
+  ...emptyLibrary(),
+  characters: Object.fromEntries(BUILTIN_CHARACTERS.map((c) => [c.id, c])),
+  damage_patterns: Object.fromEntries(BUILTIN_DAMAGE.map((d) => [d.id, d])), target_profiles: Object.fromEntries(BUILTIN_TARGETS.map((t) => [t.id, t])),
 });
 
 describe('formats/pyfadb (Pyfa saveddata.db, fixture written by Pyfa 1d9f72b)', () => {
@@ -73,17 +74,17 @@ describe('formats/pyfadb (Pyfa saveddata.db, fixture written by Pyfa 1d9f72b)', 
     expect(r.damagePatterns.map((d) => [d.name, d.em, d.explosive])).toEqual([['Pyfa Pattern', 10, 40]]); // unnamed 25/25/25/25 -> built-in Uniform
     expect(r.targetProfiles.map((t) => [t.name, t.kinetic, t.signature_radius])).toEqual([['Pyfa Target', 0.3, 80]]);
     const [rif, vex, , sv] = r.fits;
-    expect(rif.damage_pattern_id).toBe(r.damagePatterns[0].id);
-    expect(rif.target_profile_id).toBe(r.targetProfiles[0].id);
-    expect(vex.character_id).toBe(r.characters[0].id);
-    expect(sv.character_id).toBe('all0');
-    expect(vex.projected).toEqual([{ kind: 'fit', fit_id: rif.id, amount: 1, distance_m: 5000 }]);
-    expect(vex.fleet.booster_fit_ids).toEqual([sv.id]);
+    expect(rif.refs.damage_pattern_id).toBe(r.damagePatterns[0].id);
+    expect(rif.refs.target_profile_id).toBe(r.targetProfiles[0].id);
+    expect(vex.refs.character_id).toBe(r.characters[0].id);
+    expect(sv.refs.character_id).toBe('all0');
+    expect(vex.links.projected_fits).toEqual([{ fit_id: rif.id, amount: 1, distance_m: 5000 }]);
+    expect(vex.links.booster_fit_ids).toEqual([sv.id]);
     expect(r.fits.every((f) => f.folder === 'Pyfa import' && f.created)).toBe(true);
     // the projected Rifter and the command Svipul reach the engine request
     for (const f of r.fits) lib.fits[f.id] = f;
     for (const c of r.characters) lib.characters[c.id] = c;
-    const req = toRequest(vex, lib) as { projected: { kind: string; fit: { ship: { type_id: number } } }[]; fleet: { booster_fits: unknown[] }; character: { skills: { default_level: number } } };
+    const req = requestFor(lib, vex) as { projected: { kind: string; fit: { ship: { type_id: number } } }[]; fleet: { booster_fits: unknown[] }; character: { skills: { default_level: number } } };
     expect(req.projected[0].kind).toBe('fit');
     expect(req.projected[0].fit.ship.type_id).toBe(id('Rifter'));
     expect(req.fleet.booster_fits).toHaveLength(1);

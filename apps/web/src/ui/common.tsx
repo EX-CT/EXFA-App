@@ -58,10 +58,12 @@ export function Tabs<T extends string>({ tabs, value, onChange }: { tabs: [T, st
   );
 }
 
-export function InlineEdit({ value, onCommit, placeholder, className = '' }: {
+export function InlineEdit({ value, onCommit, placeholder, className = '', autoEdit = false }: {
   value: string; onCommit: (value: string) => void; placeholder?: string; className?: string;
+  /** Mount straight into the input (inline "new X" rows in trees). */
+  autoEdit?: boolean;
 }) {
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(autoEdit);
   const [draft, setDraft] = useState(value);
   const original = useRef(value);
   const finished = useRef(false);

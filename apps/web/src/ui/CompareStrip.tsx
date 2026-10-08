@@ -3,15 +3,15 @@ import type { Dataset } from '../data/dataset';
 import type { PriceOverride } from '../data/prices';
 import type { Engine, FitStats } from '../engine/adapter';
 import { metric } from '../fit/metrics';
-import { applyMarketPick, toRequest, type Fit, type Library, type MarketMode, type MarketSelection } from '../fit/model';
+import { applyAlternativeOption, applyMarketPick, requestFor, type FitDoc, type Library, type MarketMode, type MarketSelection } from '../fit/model';
 import { applyEdits, characterScenarios, chargeScenarios, offlineScenarios, variationScenarios } from '../fit/whatif';
 import { t } from '../i18n';
 import { fmt, Tabs, TypeIcon } from './common';
 import { VIOLATION_LABEL } from './Stats';
 
-export type StripTab = 'variations' | 'charges' | 'offline' | 'characters';
+export type StripTab = 'variations' | 'charges' | 'offline' | 'characters' | 'alternatives';
 type Category = 'propulsion' | 'weapons' | 'tank' | 'ewar' | 'capacitor' | 'general';
-interface StripScenario { id: string; name: string; fit: Fit; typeId: number }
+interface StripScenario { id: string; name: string; fit: FitDoc; typeId: number }
 interface CalcTarget { id: string; key: string; request: Record<string, unknown> }
 interface CalcJob {
   key: string; engine: Engine; request: Record<string, unknown>;
@@ -77,12 +77,12 @@ function category(ds: Dataset, id: number | null): Category | null {
   return 'general';
 }
 
-function selectedType(fit: Fit, sel: MarketSelection): number | null {
+function selectedType(fit: FitDoc, sel: MarketSelection): number | null {
   if (!sel) return null;
-  if (sel.list === 'modules') return fit.modules[sel.index]?.type_id ?? null;
-  if (sel.list === 'drones') return fit.drones[sel.index]?.type_id ?? null;
-  if (sel.list === 'fighters') return fit.fighters[sel.index]?.type_id ?? null;
-  return fit.cargo[sel.index]?.type_id ?? null;
+  if (sel.list === 'modules') return fit.fit.modules[sel.index]?.type_id ?? null;
+  if (sel.list === 'drones') return fit.fit.drones[sel.index]?.type_id ?? null;
+  if (sel.list === 'fighters') return fit.fit.fighters[sel.index]?.type_id ?? null;
+  return fit.fit.cargo[sel.index]?.type_id ?? null;
 }
 
 function warningText(reason: string): string {
@@ -136,11 +136,13 @@ function metricText(stats: FitStats | null, base: FitStats | null, key: string, 
   return { text, tone: valueTone(delta, m.better) };
 }
 
-export function CompareStrip({ ds, fit, lib, engine, stats, sel, candidateId, mode, pins, priceOverrides, tab, onTab, onTogglePin, onMarketApply, onApplyFit }: {
-  ds: Dataset; fit: Fit | null; lib: Library; engine: Engine | null; stats: FitStats | null;
+export function CompareStrip({ ds, fit, lib, engine, stats, sel, candidateId, mode, pins, priceOverrides, tab, onTab, onTogglePin, onMarketApply, onApplyFit, onAddAlternative }: {
+  ds: Dataset; fit: FitDoc | null; lib: Library; engine: Engine | null; stats: FitStats | null;
   sel: MarketSelection; candidateId: number | null; mode: MarketMode; pins: Record<string, string[]>; priceOverrides: PriceOverride[];
   tab: StripTab; onTab: (tab: StripTab) => void;
-  onTogglePin: (category: string, key: string) => void; onMarketApply: (id: number) => void; onApplyFit: (fit: Fit, label: string) => void;
+  onTogglePin: (category: string, key: string) => void; onMarketApply: (id: number) => void; onApplyFit: (fit: FitDoc, label: string) => void;
+  /** Adds the row's type to the selected item's Alternative (spec: "+ 可替代"). */
+  onAddAlternative?: (typeId: number) => void;
 }) {
   const selectedId = fit ? selectedType(fit, sel) : null;
   const currentCategory = category(ds, selectedId);
@@ -167,8 +169,8 @@ export function CompareStrip({ ds, fit, lib, engine, stats, sel, candidateId, mo
   }, [ds, fit, sel, candidateId, mode]);
   let candidateModuleIndex = selectedModuleIndex;
   if (candidate && candidateId != null && (candidateModuleIndex == null || candidate.note?.kind === 'added')) {
-    for (let index = candidate.fit.modules.length - 1; index >= 0; index--) {
-      if (candidate.fit.modules[index].type_id === candidateId) { candidateModuleIndex = index; break; }
+    for (let index = candidate.fit.fit.modules.length - 1; index >= 0; index--) {
+      if (candidate.fit.fit.modules[index].type_id === candidateId) { candidateModuleIndex = index; break; }
     }
   }
   const scenarios = useMemo<StripScenario[]>(() => {
@@ -182,7 +184,7 @@ export function CompareStrip({ ds, fit, lib, engine, stats, sel, candidateId, mo
       });
       for (const s of variants) {
         const next = applyEdits(ds, fit, s.edits);
-        out.push({ id: s.id, name: s.label, fit: next, typeId: next.modules[sel.index]?.type_id ?? selectedId ?? fit.ship_type_id });
+        out.push({ id: s.id, name: s.label, fit: next, typeId: next.fit.modules[sel.index]?.type_id ?? selectedId ?? fit.fit.ship.type_id });
       }
     } else if (tab === 'variations' && (sel?.list === 'drones' || sel?.list === 'fighters') && selectedId != null) {
       const variants = ds.variations(selectedId).filter((v) => v !== selectedId)
@@ -192,20 +194,27 @@ export function CompareStrip({ ds, fit, lib, engine, stats, sel, candidateId, mo
         if (result.note?.kind !== 'warning') out.push({ id: `var-${sel.list}-${sel.index}-${id}`, name: ds.name(id), fit: result.fit, typeId: id });
       }
     } else if (tab === 'charges' && sel?.list === 'modules') {
-      for (const s of chargeScenarios(ds, fit, sel.index)) out.push({ id: s.id, name: s.label, fit: applyEdits(ds, fit, s.edits), typeId: fit.modules[sel.index]?.type_id ?? fit.ship_type_id });
+      for (const s of chargeScenarios(ds, fit, sel.index)) out.push({ id: s.id, name: s.label, fit: applyEdits(ds, fit, s.edits), typeId: fit.fit.modules[sel.index]?.type_id ?? fit.fit.ship.type_id });
     } else if (tab === 'offline') {
-      for (const s of offlineScenarios(ds, fit)) out.push({ id: s.id, name: s.label, fit: applyEdits(ds, fit, s.edits), typeId: fit.modules[Number(s.id.slice(4))]?.type_id ?? fit.ship_type_id });
+      for (const s of offlineScenarios(ds, fit)) out.push({ id: s.id, name: s.label, fit: applyEdits(ds, fit, s.edits), typeId: fit.fit.modules[Number(s.id.slice(4))]?.type_id ?? fit.fit.ship.type_id });
+    } else if (tab === 'alternatives' && sel && sel.list !== 'fighters') {
+      const item = sel.list === 'modules' ? fit.fit.modules[sel.index] : sel.list === 'drones' ? fit.fit.drones[sel.index] : fit.fit.cargo[sel.index];
+      const alt = item?.alt_id ? fit.alternatives.find((a) => a.id === item.alt_id) : null;
+      alt?.options.forEach((opt, i) => {
+        const charge = opt.charge_type_id ? ` + ${ds.name(opt.charge_type_id)}` : '';
+        out.push({ id: `alt-${alt.id}-${i}`, name: `${ds.name(opt.type_id)}${charge}${opt.quantity != null ? ` ×${opt.quantity}` : ''}`, fit: applyAlternativeOption(fit, alt.id, i), typeId: opt.type_id });
+      });
     } else if (tab === 'characters') {
-      for (const s of characterScenarios(Object.values(lib.characters), fit)) out.push({ id: s.id, name: s.label, fit: applyEdits(ds, fit, s.edits), typeId: fit.ship_type_id });
+      for (const s of characterScenarios(Object.values(lib.characters), fit)) out.push({ id: s.id, name: s.label, fit: applyEdits(ds, fit, s.edits), typeId: fit.fit.ship.type_id });
     }
     return out.slice(0, 60);
   }, [ds, fit, lib.characters, sel, selectedId, tab]);
   const targets = useMemo<CalcTarget[]>(() => {
-    const list: { id: string; fit: Fit }[] = [];
+    const list: { id: string; fit: FitDoc }[] = [];
     if (candidate?.note?.kind !== 'warning' && candidateId != null && candidate) list.push({ id: 'candidate', fit: candidate.fit });
     for (const s of scenarios) list.push({ id: s.id, fit: s.fit });
     return list.map(({ id, fit: rowFit }) => {
-      const raw = toRequest(rowFit, lib);
+      const raw = requestFor(lib, rowFit);
       const request = { ...raw, options: { ...(raw.options as object), price: true }, ...(priceOverrides.length ? { price_overrides: priceOverrides } : {}) };
       return { id, request, key: JSON.stringify(request) };
     });
@@ -234,7 +243,7 @@ export function CompareStrip({ ds, fit, lib, engine, stats, sel, candidateId, mo
   const baseline = stats && !stats.error ? stats : null;
   const candidateStats = activeStats.candidate ?? null;
   const candidateWarnings = candidate?.note?.kind === 'warning' ? warningText(candidate.note.reason) : candidateStats?.error?.message ?? '';
-  const baselineIcon = fit?.ship_type_id ?? candidateId ?? 587;
+  const baselineIcon = fit?.fit.ship.type_id ?? candidateId ?? 587;
   const fixedKeys = ['cpu_left', 'pg_left', 'cap_delta'];
   const metricKeys = [...fixedKeys, ...categoryMetrics, 'price'];
   const shownMetrics = [...new Set(metricKeys)].map((key) => metric(key)).filter((m) => m != null);
@@ -260,7 +269,7 @@ export function CompareStrip({ ds, fit, lib, engine, stats, sel, candidateId, mo
     <div className="compare-strip">
       <div className="strip-tools">
         <Tabs tabs={[
-          ['variations', t('Variations')], ['charges', t('Charges')], ['offline', t('Offline')], ['characters', t('Characters')],
+          ['variations', t('Variations')], ['charges', t('Charges')], ['offline', t('Offline')], ['characters', t('Characters')], ['alternatives', t('Alternatives')],
         ]} value={tab} onChange={(value) => onTab(value as StripTab)} />
         {sel && selectedId != null && <span className="strip-selection">{t('Selected')}: {ds.name(selectedId)}</span>}
       </div>
@@ -296,7 +305,8 @@ export function CompareStrip({ ds, fit, lib, engine, stats, sel, candidateId, mo
                 return <tr key="candidate" className={`strip-candidate ${status.className}${err ? ' strip-error' : ''}`} title={err || status.title}>
                   <td><span className="strip-name"><TypeIcon id={candidateId} size={16} /><b>{name}</b><small>{t('Candidate')}</small></span>
                     {(err || status.title) && <span className="strip-tooltip">{err || status.title}</span>}</td>
-                  {renderValues(st, 'candidate')}<td><button className="tiny" disabled={!!err} onClick={() => onMarketApply(candidateId)}>{t('Apply')}</button></td>
+                  {renderValues(st, 'candidate')}<td><button className="tiny" disabled={!!err} onClick={() => onMarketApply(candidateId)}>{t('Apply')}</button>
+                    {onAddAlternative && sel && sel.list !== 'fighters' && <button className="tiny alt-add" title={t('add this type to the selected item’s alternatives')} onClick={() => onAddAlternative(candidateId)}>+{t('可替代')}</button>}</td>
                 </tr>;
               })()}
               {scenarios.map((s) => {
@@ -306,7 +316,8 @@ export function CompareStrip({ ds, fit, lib, engine, stats, sel, candidateId, mo
                 return <tr key={s.id} className={`strip-variant ${status.className}${err ? ' strip-error' : ''}`} title={err || status.title}>
                   <td><span className="strip-name"><TypeIcon id={s.typeId} size={16} /><span>{s.name}</span></span>
                     {(err || status.title) && <span className="strip-tooltip">{err || status.title}</span>}</td>
-                  {renderValues(st, 'variant')}<td><button className="tiny" disabled={!st || !!st.error} onClick={() => onApplyFit(s.fit, s.name)}>{t('Apply')}</button></td>
+                  {renderValues(st, 'variant')}<td><button className="tiny" disabled={!st || !!st.error} onClick={() => onApplyFit(s.fit, s.name)}>{tab === 'alternatives' ? t('切换') : t('Apply')}</button>
+                    {onAddAlternative && tab !== 'alternatives' && sel && sel.list !== 'fighters' && <button className="tiny alt-add" title={t('add this type to the selected item’s alternatives')} onClick={() => onAddAlternative(s.typeId)}>+{t('可替代')}</button>}</td>
                 </tr>;
               })}
             </tbody>

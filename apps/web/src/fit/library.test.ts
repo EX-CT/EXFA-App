@@ -1,17 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { newFit, type Library } from './model';
-import { allFolders, allTags, deleteFits, deleteFolder, duplicateFit, makeBackup, mergeLibrary, moveFits, parseBackup, renameFit, renameFolder, searchFits, tagFits } from './library';
+import { emptyLibrary, newFit, type Library } from './model';
+import { allFolders, allTags, deleteFits, deleteFleet, deleteFolder, duplicateFit, fleetsOf, joinFleet, leaveFleets, makeBackup, mergeLibrary, moveFleet, moveFits, parseBackup, renameFit, renameFolder, searchFits, setFleetRole, tagFits } from './library';
 import { BUILTIN_CHARACTERS } from '../data/presets';
 import { id, miniDataset } from '../test/fixture';
 
 const ds = miniDataset();
 function lib(): Library {
-  const a = { ...newFit(id('Rifter'), 'Brawler'), id: 'a', folder: 'PvP/Frigates', tags: ['solo'] };
-  const b = { ...newFit(id('Vexor'), 'Ratter'), id: 'b', folder: 'PvE', notes: 'for anomalies' };
+  const a = { ...newFit(id('Rifter'), 'Brawler'), id: 'a', folder: 'PvP/Frigates', tags: ['solo'], modified: '2026-06-01T00:00:00.000Z' };
+  const b = { ...newFit(id('Vexor'), 'Ratter'), id: 'b', folder: 'PvE', notes: 'for anomalies', modified: '2026-06-01T00:00:00.000Z' };
   const c = { ...newFit(id('Merlin'), 'Kiter'), id: 'c' };
-  b.projected = [{ kind: 'fit', fit_id: 'a', amount: 1, distance_m: null }];
-  b.fleet = { booster_fit_ids: ['c'], buffs: [] };
-  return { fits: { a, b, c }, characters: Object.fromEntries(BUILTIN_CHARACTERS.map((x) => [x.id, x])), damagePatterns: {}, targetProfiles: {}, folders: ['Empty'] };
+  b.links.projected_fits = [{ fit_id: 'a', amount: 1, distance_m: null }];
+  b.links.booster_fit_ids = ['c'];
+  return { ...emptyLibrary(), fits: { a, b, c }, characters: Object.fromEntries(BUILTIN_CHARACTERS.map((x) => [x.id, x])), folders: ['Empty'] };
 }
 
 describe('fit/library', () => {
@@ -48,24 +48,65 @@ describe('fit/library', () => {
     expect([d.name, d.folder, d.tags]).toEqual(['Brawler (copy)', 'PvP/Frigates', ['solo']]);
     const x = deleteFits(l, ['a', 'c']);
     expect(Object.keys(x.fits)).toEqual(['b']);
-    expect(x.fits.b.projected).toEqual([]);
-    expect(x.fits.b.fleet.booster_fit_ids).toEqual([]);
+    expect(x.fits.b.links.projected_fits).toEqual([]);
+    expect(x.fits.b.links.booster_fit_ids).toEqual([]);
   });
-  it('web.unit.library-backup-merge: JSON backup v2 (no built-ins), v1 backups still restore, restoring twice adds nothing, colliding ids are remapped with their links', () => {
+  it('web.unit.library-fleets: create/join (single membership), role, leave, delete keeps fits; deleted fits leave fleets', () => {
+    let l = lib();
+    const j1 = joinFleet(l, null, 'a', 'Home defence');
+    const fl = j1.fleetId;
+    l = j1.lib;
+    expect(l.fleets[fl].members).toEqual([{ fit_id: 'a', role: 'member' }]);
+    expect(fleetsOf(l, 'a').map((f) => f.id)).toEqual([fl]);
+    l = setFleetRole(l, fl, 'a', 'command');
+    expect(l.fleets[fl].members[0].role).toBe('command');
+    l = joinFleet(l, fl, 'b').lib;
+    expect(l.fleets[fl].members.map((m) => m.fit_id)).toEqual(['a', 'b']);
+    // joining a second fleet moves the fit over
+    const j2 = joinFleet(l, null, 'b', 'Roaming');
+    l = j2.lib;
+    expect(l.fleets[fl].members.map((m) => m.fit_id)).toEqual(['a']);
+    expect(l.fleets[j2.fleetId].members.map((m) => m.fit_id)).toEqual(['b']);
+    // moveFleet/renameFolder keep fleets with their folder; deleteFits drops dangling members
+    l = moveFleet(l, fl, 'PvP/Fleets');
+    expect(l.fleets[fl].folder).toBe('PvP/Fleets');
+    const l2 = deleteFits(l, ['a']);
+    expect(l2.fleets[fl].members).toEqual([]);
+    expect(Object.keys(l2.fits)).toHaveLength(2);
+    // leaveFleets clears membership; deleteFleet removes the fleet but not its fits
+    const l3 = leaveFleets(l, 'b');
+    expect(l3.fleets[j2.fleetId].members).toEqual([]);
+    const l4 = deleteFleet(l, j2.fleetId);
+    expect(l4.fleets[j2.fleetId]).toBeUndefined();
+    expect(Object.keys(l4.fits)).toHaveLength(3);
+  });
+  it('web.unit.library-backup-merge: JSON backup v3 (no built-ins), legacy flat-fit backups still restore through migrate, restoring twice adds nothing', () => {
     const l = lib();
     const bk = makeBackup(l, [{ name: 'set' }]);
-    expect(bk.version).toBe(2);
+    expect(bk.version).toBe(3);
     expect(Object.keys(bk.lib.characters)).toEqual([]);
     const back = parseBackup(JSON.stringify(bk));
     expect(back.lib.folders).toEqual(['Empty']);
-    expect(mergeLibrary(l, back.lib).added).toEqual([]);
-    const v1 = parseBackup(JSON.stringify({ format: 'eve-fit-web-library', version: 1, lib: { fits: { a: { ...l.fits.a, name: 'Other' } } } }));
-    expect(v1.lib.characters).toEqual({});
-    const m = mergeLibrary(l, { fits: { a: v1.lib.fits.a, b: { ...l.fits.b, name: 'Ratter 2' } } });
-    expect(m.added).toHaveLength(2);
-    const nb = m.lib.fits[m.added[1]];
-    expect(nb.projected[0].fit_id).toBe(m.added[0]);
-    expect(Object.keys(m.lib.fits)).toHaveLength(5);
-    expect(() => parseBackup('{"x":1}')).toThrow(/not an eve-fit-web backup/);
+    const twice = mergeLibrary(l, back.lib);
+    expect(twice.added).toEqual([]);
+    expect(twice.skipped).toHaveLength(3);
+    // a legacy (flat) backup restores through format migrate; an id collision keeps the newer modified
+    const v1 = parseBackup(JSON.stringify({ format: 'eve-fit-web-library', version: 1, lib: {
+      fits: { z: { id: 'z', name: 'Old flat fit', ship_type_id: id('Rifter'), modules: [], damage_pattern_id: 'em' } },
+      characters: { me: { id: 'me', name: 'Me', default_level: 3, levels: {} } },
+    } }));
+    expect(v1.lib.fits.z.format).toBe('exfa/fit@1');
+    expect(v1.lib.fits.z.refs.damage_pattern_id).toBe('em');
+    expect(v1.lib.characters.me.name).toBe('Me');
+    const older = { ...l.fits.b, name: 'Ratter 2', modified: '2000-01-01T00:00:00.000Z' };
+    const newer = { ...l.fits.a, name: 'Brawler 2', modified: '2999-01-01T00:00:00.000Z' };
+    const m = mergeLibrary(l, { fits: { a: newer, b: older, z: v1.lib.fits.z } });
+    expect(m.added).toEqual(['z']);
+    expect(m.updated).toEqual(['a']);
+    expect(m.skipped).toEqual(['b']);
+    expect(m.lib.fits.a.name).toBe('Brawler 2');
+    expect(m.lib.fits.b.name).toBe('Ratter');
+    expect(Object.keys(m.lib.fits)).toHaveLength(4);
+    expect(() => parseBackup('{"x":1}')).toThrow();
   });
 });

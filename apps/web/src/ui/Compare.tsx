@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { Dataset } from '../data/dataset';
 import { engineBatch, type Engine, type FitStats } from '../engine/adapter';
 import { compareTable } from '../fit/metrics';
-import { toRequest, type Library } from '../fit/model';
+import { requestFor, type Library } from '../fit/model';
 import { t } from '../i18n';
 import { fmt } from './common';
 
@@ -14,12 +14,12 @@ export function Compare({ ds, lib, activeId, engine, onOpen }: { ds: Dataset; li
   const all = Object.values(lib.fits);
   const [sel, setSel] = useState<string[]>(() => {
     const act = activeId && lib.fits[activeId];
-    const grp = act ? ds.type(act.ship_type_id)?.group : null;
-    const same = all.filter((f) => f.id !== activeId && ds.type(f.ship_type_id)?.group === grp).slice(0, 3).map((f) => f.id);
+    const grp = act ? ds.type(act.fit.ship.type_id)?.group : null;
+    const same = all.filter((f) => f.id !== activeId && ds.type(f.fit.ship.type_id)?.group === grp).slice(0, 3).map((f) => f.id);
     return [...(act ? [act.id] : []), ...same];
   });
   const ids = sel.filter((id) => lib.fits[id]);
-  const reqs = useMemo(() => ids.map((id) => toRequest(lib.fits[id], lib)), [ids.join(','), lib]); // eslint-disable-line react-hooks/exhaustive-deps
+  const reqs = useMemo(() => ids.map((id) => requestFor(lib, lib.fits[id])), [ids.join(','), lib]); // eslint-disable-line react-hooks/exhaustive-deps
   const key = JSON.stringify(reqs);
   const [res, setRes] = useState<{ key: string; stats: (FitStats | null)[]; errors: string[]; ms: number; via: 'batch' | 'calc' } | null>(null);
   useEffect(() => {
@@ -53,7 +53,7 @@ export function Compare({ ds, lib, activeId, engine, onOpen }: { ds: Dataset; li
       <details open={ids.length < 2}>
         <summary>{t('Fits to compare')} ({ids.length})</summary>
         <ul className="cmp-pick">{all.map((f) => (
-          <li key={f.id}><label><input type="checkbox" className="cmp-fit" data-fit={f.name} checked={sel.includes(f.id)} onChange={() => toggle(f.id)} /> {f.name} <span className="muted">{ds.name(f.ship_type_id)}</span></label></li>
+          <li key={f.id}><label><input type="checkbox" className="cmp-fit" data-fit={f.name} checked={sel.includes(f.id)} onChange={() => toggle(f.id)} /> {f.name} <span className="muted">{ds.name(f.fit.ship.type_id)}</span></label></li>
         ))}</ul>
       </details>
       {ids.length < 2 ? <p className="muted">{t('Pick two or more fits.')}</p> : !cur ? <p className="muted">{t('engine computing…')}</p> : (

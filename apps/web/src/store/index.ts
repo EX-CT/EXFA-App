@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { BUILTIN_CHARACTERS, BUILTIN_DAMAGE, BUILTIN_TARGETS } from '../data/presets';
 import type { Library, MarketMode } from '../fit/model';
+import { emptyLibrary } from '../fit/model';
 import type { EngineConfig } from '../engine/adapter';
 import { diffLibrary, LEGACY_KEY, openLibrary, storedPart, type LibraryBackend, type StoredLibrary } from './library';
 
@@ -31,7 +32,7 @@ export function defaultEngineConfig(): EngineConfig {
 }
 
 function initial(): AppState {
-  const lib: Library = { fits: {}, characters: {}, damagePatterns: {}, targetProfiles: {}, folders: [] };
+  const lib: Library = emptyLibrary();
   let settings: Settings = {
     engine: defaultEngineConfig(), lang: 'en', activeFitId: null,
     dockHeight: 34, dockCollapsed: false, infoHeight: 190, infoCollapsed: false,
@@ -42,8 +43,8 @@ function initial(): AppState {
     if (saved) settings = { ...settings, ...saved.settings, engine: defaultEngineConfig() };
   } catch { /* ignore corrupt storage */ }
   for (const c of BUILTIN_CHARACTERS) lib.characters[c.id] = c;
-  for (const d of BUILTIN_DAMAGE) lib.damagePatterns[d.id] = d;
-  for (const t of BUILTIN_TARGETS) lib.targetProfiles[t.id] = t;
+  for (const d of BUILTIN_DAMAGE) lib.damage_patterns[d.id] = d;
+  for (const t of BUILTIN_TARGETS) lib.target_profiles[t.id] = t;
   return { lib, settings };
 }
 
@@ -72,7 +73,8 @@ export function useAppState() {
       backend.current = b;
       setState((s) => {
         const merged: Library = { ...s.lib, fits: { ...lib.fits, ...s.lib.fits }, characters: { ...s.lib.characters, ...lib.characters },
-          damagePatterns: { ...s.lib.damagePatterns, ...lib.damagePatterns }, targetProfiles: { ...s.lib.targetProfiles, ...lib.targetProfiles }, folders: lib.folders };
+          damage_patterns: { ...s.lib.damage_patterns, ...lib.damage_patterns }, target_profiles: { ...s.lib.target_profiles, ...lib.target_profiles },
+          scenarios: { ...s.lib.scenarios, ...lib.scenarios }, fleets: { ...s.lib.fleets, ...lib.fleets }, folders: lib.folders };
         saved.current = { ...lib, fits: { ...lib.fits } };
         return { ...s, lib: merged };
       });
@@ -86,9 +88,9 @@ export function useAppState() {
     if (!b) return chain.current;
     const next = storedPart(latest.current.lib);
     const d = diffLibrary(saved.current, next);
-    if (!d.put.length && !d.del.length && !Object.keys(d.kv).length) return chain.current;
+    if (!d.put.length && !d.del.length && !d.index) return chain.current;
     saved.current = { ...next, fits: { ...next.fits } };
-    chain.current = chain.current.then(() => b.write(d.put, d.del, d.kv)).then(
+    chain.current = chain.current.then(() => b.write(d.put, d.del, d.index)).then(
       () => setStatus((x) => ({ ...x, fits: Object.keys(next.fits).length, saves: x.saves + 1, error: undefined })),
       (e) => setStatus((x) => ({ ...x, error: `saving failed: ${e?.message ?? e}` })));
     return chain.current;

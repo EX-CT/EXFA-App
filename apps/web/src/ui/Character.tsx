@@ -1,13 +1,13 @@
 import { useMemo, useState } from 'react';
 import { t } from '../i18n';
 import type { Dataset } from '../data/dataset';
-import { uid, type Character, type Fit, type Library } from '../fit/model';
+import { uid, type Character, type FitDoc, type Library } from '../fit/model';
 import { esiClientId, importEsiCharacter, loadEsiCharacters, login, setEsiClientId, unlinkEsiCharacter } from '../esi/client';
 
-export function requiredSkills(ds: Dataset, fit: Fit): Map<number, number> {
+export function requiredSkills(ds: Dataset, fit: FitDoc): Map<number, number> {
   const out = new Map<number, number>();
-  const ids = [fit.ship_type_id, ...fit.modules.flatMap((m) => [m.type_id, m.charge_type_id ?? 0]), ...fit.drones.map((d) => d.type_id),
-    ...fit.fighters.map((f) => f.type_id), ...fit.implants, ...fit.boosters.map((b) => b.type_id)].filter(Boolean);
+  const ids = [fit.fit.ship.type_id, ...fit.fit.modules.flatMap((m) => [m.type_id, m.charge_type_id ?? 0]), ...fit.fit.drones.map((d) => d.type_id),
+    ...fit.fit.fighters.map((f) => f.type_id), ...fit.fit.implants, ...fit.fit.boosters.map((b) => b.type_id)].filter(Boolean);
   const visit = (id: number, depth: number) => {
     for (const [s, l] of ds.raw.required_skills?.[id] ?? []) {
       if ((out.get(s) ?? 0) < l) out.set(s, l);
@@ -18,8 +18,8 @@ export function requiredSkills(ds: Dataset, fit: Fit): Map<number, number> {
   return out;
 }
 
-export function CharacterEditor({ ds, lib, fit, onLib, onFit }: { ds: Dataset; lib: Library; fit: Fit | null; onLib: (l: Library) => void; onFit?: (f: Fit) => void }) {
-  const [sel, setSel] = useState(fit?.character_id ?? 'all5');
+export function CharacterEditor({ ds, lib, fit, onLib, onFit }: { ds: Dataset; lib: Library; fit: FitDoc | null; onLib: (l: Library) => void; onFit?: (f: FitDoc) => void }) {
+  const [sel, setSel] = useState(fit?.refs.character_id ?? 'all5');
   const [q, setQ] = useState('');
   const ch = lib.characters[sel] ?? lib.characters['all5'];
   const groups = useMemo(() => {
@@ -79,7 +79,7 @@ export function CharacterEditor({ ds, lib, fit, onLib, onFit }: { ds: Dataset; l
 }
 
 /** ESI single sign-on panel: link characters, import their trained skills / implants into a local Character. */
-function EsiPanel({ ds, lib, fit, onLib, onFit, onSel }: { ds: Dataset; lib: Library; fit: Fit | null; onLib: (l: Library) => void; onFit?: (f: Fit) => void; onSel: (id: string) => void }) {
+function EsiPanel({ ds, lib, fit, onLib, onFit, onSel }: { ds: Dataset; lib: Library; fit: FitDoc | null; onLib: (l: Library) => void; onFit?: (f: FitDoc) => void; onSel: (id: string) => void }) {
   const [, bump] = useState(0);
   const [busy, setBusy] = useState<number | null>(null);
   const [err, setErr] = useState('');
@@ -100,7 +100,7 @@ function EsiPanel({ ds, lib, fit, onLib, onFit, onSel }: { ds: Dataset; lib: Lib
       onLib({ ...lib, characters: { ...lib.characters, [c.id]: c } });
       onSel(c.id);
       // Pyfa: importing a character also plugs its implants into the current fit
-      if (fit && onFit && ec.implants?.length) onFit({ ...fit, implants: ec.implants, character_id: c.id });
+      if (fit && onFit && ec.implants?.length) onFit({ ...fit, fit: { ...fit.fit, implants: ec.implants }, refs: { ...fit.refs, character_id: c.id } });
     } catch (e) { setErr(String(e)); }
     setBusy(null); bump((n) => n + 1);
   };

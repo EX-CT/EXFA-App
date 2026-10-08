@@ -552,7 +552,7 @@ const zhUi = await p.evaluate(() => ({ tabs: [...document.querySelectorAll('.tab
 await clickText('.center .tabs button', '导入 / 导出');
 const zhIo = await p.evaluate(() => [...document.querySelectorAll('.import-export button')].map((x) => x.textContent));
 await langSel('en');
-const latin = (xs) => xs.filter((x) => /[a-z]{3,}/.test(x.replace(/DPS|EFT|DNA|ESI|JSON|XML|Ctrl/g, '')));
+const latin = (xs) => xs.filter((x) => /[a-z]{3,}/.test(x.replace(/DPS|EFT|DNA|ESI|JSON|XML|Ctrl|zip|exfa/gi, '')));
 const zhAll = [...zhUi.tabs, ...zhUi.sections, ...zhUi.slots, ...zhIo];
 check('web.e2e.zh-ui: zh-CN UI (dock tabs, stats sections, slots, import/export controls) has no untranslated labels',
   zhUi.tabs.includes('对比栏') && zhUi.tabs.includes('配置对比') && zhUi.sections.length > 3 && zhIo.includes('导入') && latin(zhAll).length === 0,
@@ -617,7 +617,6 @@ const found = (await libFits()).map((f) => f.name);
 await setIn('.fitbrowser .search', '');
 check('web.e2e.library-search-tags: tag filter and search (ship name)', tagged.join() === 'Renamed Rifter' && found.join() === 'Pyfa Thanatos', `${tagged} | ${found}`);
 await p.evaluate(() => document.querySelector('details.lib-folder[data-folder="PvP/Frigates"] .lib-folder-rename').click());
-await p.click('details.lib-folder[data-folder="PvP/Frigates"] .inline-edit');
 await setIn('details.lib-folder[data-folder="PvP/Frigates"] input.inline-edit-input', 'PvP/Small');
 await p.keyboard.press('Enter');
 await p.waitForFunction((id) => [...document.querySelectorAll('.lib-fit')].some((x) => x.dataset.fitId === id && x.closest('details')?.dataset.folder === 'PvP/Small'), { timeout: 10000 }, rif.id);
@@ -684,7 +683,7 @@ await (await p.$('.lib-import-file')).uploadFile(bkFile);
 await new Promise((r) => setTimeout(r, 800));
 const na = (await libFits()).length;
 const bj = JSON.parse(bk?.text || '{}');
-check('web.e2e.library-backup-restore: JSON backup (v2: folders, tags) restores without duplicating fits', bj.version === 2 && bj.lib?.folders?.includes('PvP/Small') && Object.keys(bj.lib.fits).length === nb && na === nb, `${nb} fits, after restore ${na}`);
+check('web.e2e.library-backup-restore: JSON backup (v3: folders, tags, fleets) restores without duplicating fits', bj.version === 3 && bj.lib?.folders?.includes('PvP/Small') && Object.keys(bj.lib.fits).length === nb && na === nb, `${nb} fits, after restore ${na}`);
 
 // DNA import (dialog): a fit's DNA, plain and as an in-game fitting link; each gives the same
 // fit back (DNA round trip, drones launched, same stats for both)

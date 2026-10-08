@@ -26,3 +26,5 @@ public/data/
 public/engines/
 public/build-info.json
 public/prices/
+
+tools/fixtures/

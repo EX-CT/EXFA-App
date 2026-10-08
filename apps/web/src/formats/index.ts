@@ -1,6 +1,6 @@
 // Format RPCs run through the same worker as calc and graph requests.
 import type { Dataset, Slot } from '../data/dataset';
-import { newFit, toRequest, uid, type Character, type DamagePattern, type Fit, type Library, type Projected, type TargetProfile } from '../fit/model';
+import { newFit, requestFor, uid, type Character, type DamagePattern, type FitDoc, type Library, type TargetProfile } from '../fit/model';
 import { requestToStructured } from './convert';
 import type { ExportFormat, ExportOptions, ImportFormat, StructuredFit, StructuredLibrary } from './types';
 import { shipstatsRequest } from './types';
@@ -28,27 +28,29 @@ const splitEft = (text: string) => {
   return heads.length > 1 ? heads.map((h, i) => lines.slice(h, heads[i + 1] ?? lines.length).join('\n')) : [text];
 };
 
-/** StructuredFit -> UI fit with library defaults (character, profiles, options). Drones of an imported fit start
- *  launched (as with the engine's eft_parse and the web's earlier importers) when the format left them all in the bay. */
-export function fitFromStructured(sf: StructuredFit, opts: { launchDrones?: boolean } = {}): Fit {
-  const f = newFit(sf.ship.type_id, sf.name);
-  f.mode_type_id = sf.ship.mode_type_id ?? null;
-  f.modules = sf.modules.map((m) => ({ type_id: m.type_id, slot: m.slot, state: m.state, charge_type_id: m.charge_type_id ?? null, mutation: m.mutation ?? null, ...(m.spool != null ? { spool: m.spool } : {}) }));
+/** StructuredFit -> fit document with library defaults (character, profiles, options). Drones of an imported fit
+ *  start launched (as with the engine's eft_parse and the web's earlier importers) when the format left them all in
+ *  the bay. */
+export function fitFromStructured(sf: StructuredFit, opts: { launchDrones?: boolean } = {}): FitDoc {
+  const doc = newFit(sf.ship.type_id, sf.name);
+  const f = doc.fit;
+  f.ship.mode_type_id = sf.ship.mode_type_id ?? null;
+  f.modules = sf.modules.map((m) => ({ type_id: m.type_id, slot: m.slot, state: m.state, charge_type_id: m.charge_type_id ?? null, mutation: (m.mutation ?? null) as FitDoc['fit']['modules'][number]['mutation'], ...(m.spool != null ? { spool: m.spool } : {}) }));
   const launch = (opts.launchDrones ?? true) && sf.drones.length > 0 && sf.drones.every((d) => !d.active);
-  f.drones = sf.drones.map((d) => ({ ...d, active: launch ? d.quantity : d.active }));
+  f.drones = sf.drones.map((d) => ({ ...d, mutation: d.mutation as FitDoc['fit']['drones'][number]['mutation'], active: launch ? d.quantity : d.active }));
   f.fighters = sf.fighters.map((x) => ({ ...x }));
   f.implants = [...sf.implants];
   f.boosters = sf.boosters.map((b) => ({ ...b }));
   f.cargo = sf.cargo.map((c) => ({ ...c }));
-  if (sf.notes) f.notes = sf.notes;
-  return f;
+  if (sf.notes) doc.notes = sf.notes;
+  return doc;
 }
 
-export interface ImportResult { kind: string; fits: Fit[]; warnings: string[] }
+export interface ImportResult { kind: string; fits: FitDoc[]; warnings: string[] }
 export async function importFits(ds: Dataset, text: string, format?: ImportFormat, path?: string): Promise<ImportResult> {
   const chunks = format === 'auto' || format === 'eft' ? splitEft(text) : [text];
   const warnings: string[] = [];
-  const fits: Fit[] = [];
+  const fits: FitDoc[] = [];
   let kind = '';
   for (const chunk of chunks) {
     const result = await rpc('format_import', { text: chunk, format: chunks.length > 1 ? 'eft' : format ?? 'auto', ...(path ? { path } : {}) });
@@ -63,7 +65,7 @@ export async function importFits(ds: Dataset, text: string, format?: ImportForma
   return { kind, fits, warnings };
 }
 /** One fit from text (share links, the demo fit): the first fit of the text. */
-export async function importFit(ds: Dataset, text: string, format?: ImportFormat): Promise<Fit> {
+export async function importFit(ds: Dataset, text: string, format?: ImportFormat): Promise<FitDoc> {
   const r = await importFits(ds, text, format);
   if (!r.fits.length) throw new Error('no fit in the text');
   return r.fits[0];
@@ -71,8 +73,8 @@ export async function importFit(ds: Dataset, text: string, format?: ImportFormat
 
 export interface ExportExtra { options?: ExportOptions; stats?: unknown; slotTotals?: Partial<Record<Slot, number>> }
 /** The FitRequest an export sees (and, through shipstatsRequest, the request whose stats `shipstats` needs). */
-export function exportRequest(fit: Fit, lib: Library) { return toRequest(fit, lib); }
-export async function exportFit(_ds: Dataset, fit: Fit, lib: Library, format: ExportFormat, extra: ExportExtra = {}): Promise<string> {
+export function exportRequest(fit: FitDoc, lib: Library) { return requestFor(lib, fit); }
+export async function exportFit(_ds: Dataset, fit: FitDoc, lib: Library, format: ExportFormat, extra: ExportExtra = {}): Promise<string> {
   const result = await rpc('format_export', {
     fit: exportRequest(fit, lib), name: fit.name, format,
     ...(extra.options ? { options: extra.options } : {}),
@@ -82,14 +84,14 @@ export async function exportFit(_ds: Dataset, fit: Fit, lib: Library, format: Ex
   return result.text;
 }
 /** shipstats export: calculate shipstatsRequest(fit), then let the Engine formats RPC render the text. */
-export async function exportShipstats(ds: Dataset, fit: Fit, lib: Library, calc: (req: unknown) => Promise<unknown>): Promise<string> {
+export async function exportShipstats(ds: Dataset, fit: FitDoc, lib: Library, calc: (req: unknown) => Promise<unknown>): Promise<string> {
   const stats = await calc(shipstatsRequest(exportRequest(fit, lib)));
   if ((stats as { error?: { message?: string } })?.error) throw new Error(`engine: ${(stats as { error: { message?: string } }).error.message}`);
   return await exportFit(ds, fit, lib, 'shipstats', { stats });
 }
 
 export interface LibraryImport {
-  kind: string; fits: Fit[]; characters: Character[]; damagePatterns: DamagePattern[]; targetProfiles: TargetProfile[];
+  kind: string; fits: FitDoc[]; characters: Character[]; damagePatterns: DamagePattern[]; targetProfiles: TargetProfile[];
   implantSets: { name: string; implants: number[] }[]; warnings: string[];
 }
 const sameVals = (a: Record<string, unknown>, b: Record<string, unknown>, keys: string[]) => keys.every((k) => (a[k] ?? null) === (b[k] ?? null));
@@ -119,31 +121,30 @@ export function libraryFromStructured(sl: StructuredLibrary, lib: Library, meta:
       add.push(np); ids.set(p.ref, np.id);
     }
   };
-  profiles(sl.damage_patterns, lib.damagePatterns, DT, dpId, out.damagePatterns, 'Pyfa pattern');
-  profiles(sl.target_profiles, lib.targetProfiles, [...DT, 'signature_radius', 'max_velocity', 'radius'], tpId, out.targetProfiles, 'Pyfa target');
+  profiles(sl.damage_patterns, lib.damage_patterns, DT, dpId, out.damagePatterns, 'Pyfa pattern');
+  profiles(sl.target_profiles, lib.target_profiles, [...DT, 'signature_radius', 'max_velocity', 'radius'], tpId, out.targetProfiles, 'Pyfa target');
   for (const sf of sl.fits) fitId.set(sf.ref, uid());
   const now = new Date().toISOString();
   for (const sf of sl.fits) {
-    const f = fitFromStructured(sf, { launchDrones: false });
-    f.id = fitId.get(sf.ref)!;
-    if (sf.character_ref && charId.has(sf.character_ref)) f.character_id = charId.get(sf.character_ref)!;
-    if (sf.damage_pattern_ref && dpId.has(sf.damage_pattern_ref)) f.damage_pattern_id = dpId.get(sf.damage_pattern_ref)!;
-    if (sf.target_profile_ref && tpId.has(sf.target_profile_ref)) f.target_profile_id = tpId.get(sf.target_profile_ref)!;
-    f.system_security = sf.system_security ?? null;
-    f.environment = [...(sf.environment ?? [])];
-    f.projected = (sf.projected ?? []).map((p): Projected => ({ kind: p.kind, type_id: p.type_id, state: p.state, charge_type_id: p.charge_type_id ?? null, quantity: p.quantity, amount: p.amount, distance_m: p.distance_m }));
+    const doc = fitFromStructured(sf, { launchDrones: false });
+    doc.id = fitId.get(sf.ref)!;
+    if (sf.character_ref && charId.has(sf.character_ref)) doc.refs.character_id = charId.get(sf.character_ref)!;
+    if (sf.damage_pattern_ref && dpId.has(sf.damage_pattern_ref)) doc.refs.damage_pattern_id = dpId.get(sf.damage_pattern_ref)!;
+    if (sf.target_profile_ref && tpId.has(sf.target_profile_ref)) doc.refs.target_profile_id = tpId.get(sf.target_profile_ref)!;
+    doc.fit.environment = { effect_type_ids: [...(sf.environment ?? [])], system_security: sf.system_security ?? null };
+    doc.fit.projected = (sf.projected ?? []).map((p): FitDoc['fit']['projected'][number] => ({ ...p, charge_type_id: p.charge_type_id ?? null } as FitDoc['fit']['projected'][number]));
     for (const pf of sf.projected_fits ?? []) {
       const id = fitId.get(pf.ref);
-      if (id) f.projected.push({ kind: 'fit', fit_id: id, amount: pf.amount, distance_m: pf.distance_m });
+      if (id) doc.links.projected_fits.push({ fit_id: id, amount: pf.amount, distance_m: pf.distance_m });
       else warnings.push(`fit "${sf.name}": projected fit ${pf.ref} not in the database`);
     }
-    f.fleet = { ...f.fleet, booster_fit_ids: (sf.booster_fit_refs ?? []).map((r) => fitId.get(r)).filter((x): x is string => !!x) };
-    if (sf.overrides?.length) f.overrides = sf.overrides.map((o) => ({ ...o }));
-    f.folder = sf.folder ?? meta.folder ?? '';
-    f.tags = [...new Set([...(sf.tags ?? []), ...(meta.tags ?? [])])];
-    f.created = sf.created ? new Date(sf.created.replace(' ', 'T') + (sf.created.includes('Z') ? '' : 'Z')).toISOString() : now;
-    f.modified = sf.modified ? new Date(sf.modified.replace(' ', 'T') + (sf.modified.includes('Z') ? '' : 'Z')).toISOString() : f.created;
-    out.fits.push(f);
+    doc.links.booster_fit_ids = (sf.booster_fit_refs ?? []).map((r) => fitId.get(r)).filter((x): x is string => !!x);
+    if (sf.overrides?.length) doc.fit.overrides = sf.overrides.map((o) => ({ ...o }));
+    doc.folder = sf.folder ?? meta.folder ?? '';
+    doc.tags = [...new Set([...(sf.tags ?? []), ...(meta.tags ?? [])])];
+    doc.created = sf.created ? new Date(sf.created.replace(' ', 'T') + (sf.created.includes('Z') ? '' : 'Z')).toISOString() : now;
+    doc.modified = sf.modified ? new Date(sf.modified.replace(' ', 'T') + (sf.modified.includes('Z') ? '' : 'Z')).toISOString() : doc.created;
+    out.fits.push(doc);
   }
   out.implantSets = sl.implant_sets.map((s) => ({ name: s.name, implants: [...s.implants] }));
   return out;
@@ -151,7 +152,7 @@ export function libraryFromStructured(sl: StructuredLibrary, lib: Library, meta:
 
 /** Several fits in one text: EFT blocks separated by blank lines (Pyfa's multi-fit export), or one EVE XML document
  *  with every fit (the shape of Pyfa's "Backup all fittings"), built from the Engine formats RPC's per-fit exports. */
-export async function exportFits(ds: Dataset, fits: Fit[], lib: Library, format: 'eft' | 'xml' | 'dna'): Promise<string> {
+export async function exportFits(ds: Dataset, fits: FitDoc[], lib: Library, format: 'eft' | 'xml' | 'dna'): Promise<string> {
   if (format !== 'xml') return (await Promise.all(fits.map(async (f) => (await exportFit(ds, f, lib, format)).trimEnd()))).join(format === 'eft' ? '\n\n\n' : '\n') + '\n';
   const blocks = await Promise.all(fits.map(async (f) => {
     const x = await exportFit(ds, f, lib, 'xml');
