@@ -136,6 +136,34 @@ button.tiny { font-size: 10px; padding: 0 4px; margin-left: 3px; }
 .fitbrowser .lib-actions { flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 .fitbrowser summary .right { float: right; }
 
+/* library folder tree / fleets / branches + history */
+.fitbrowser .lib-tree > .lib-folder { border-left: none; }
+.fitbrowser .lib-folder { border-left: 1px solid var(--line); margin-left: 8px; }
+.fitbrowser .lib-folder > summary { padding: 2px 4px; border-radius: 3px; }
+.fitbrowser .lib-folder > summary:hover { background: var(--panel2); }
+.fitbrowser ul.fits li { display: flex; align-items: center; gap: 4px; padding: 1px 3px; border-radius: 3px; cursor: pointer; flex-wrap: wrap; }
+.fitbrowser ul.fits li:hover { background: var(--panel2); }
+.fitbrowser ul.fits li.on { background: var(--sel); }
+.fitbrowser .lib-exp { padding: 0 3px; font-size: 9px; color: var(--mut); }
+.fitbrowser .lib-sub { flex: 1 0 100%; margin: 1px 0 2px 22px; border-left: 1px dashed var(--line2); padding-left: 6px; }
+.fitbrowser .lib-branch button { font-size: 11px; color: var(--acc2); }
+.fitbrowser .lib-branch.on button { color: var(--acc); font-weight: 600; }
+.fitbrowser .lib-hist-head { font-size: 10px; margin-top: 2px; }
+.fitbrowser .lib-hist { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+.fitbrowser .lib-fleet > details > summary { color: var(--acc2); }
+.fitbrowser .fleet-badge { color: var(--acc); }
+.fitbrowser .lib-member { font-size: 12px; }
+.fitbrowser .role-badge { font-size: 10px; padding: 0 4px; border-radius: 3px; border: 1px solid var(--line2); color: var(--mut); }
+.fitbrowser .role-badge.cmd { color: var(--acc); border-color: var(--acc); }
+.fitbrowser .lib-newfolder-inline { margin: 2px 0 2px 20px; }
+
+/* alternatives / branches (Stage D-4) */
+.fit-area .branchsel { max-width: 130px; }
+.fit-area .diverged { color: var(--warn); font-weight: 700; }
+.fit-area .branch-save { font-size: 11px; }
+.mod .alt-open { font-size: 9px; padding: 0 3px; color: var(--acc2); border-color: var(--acc2); }
+.compare-strip .alt-add { margin-left: 3px; color: var(--acc2); }
+
 /* Engine stats-ext 1.10: mining, outgoing reps, bombing, heat, drone EHP */
 .stats details.bombing { margin: 4px 0 8px; }
 .stats details.bombing summary { cursor: pointer; font-weight: 600; }

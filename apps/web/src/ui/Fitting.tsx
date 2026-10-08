@@ -3,33 +3,42 @@ import { t } from '../i18n';
 const tr = t;
 import type { InfoCtx } from './Market';
 import type { Dataset, Slot } from '../data/dataset';
-import { addItemToFit, draggedType, moveModule, type Fit, type FitModule, type Library, type MarketSelection, type ModState } from '../fit/model';
+import { applyBranch, branchDiverged, captureBranch } from '@exfa/format';
+import { addItemToFit, draggedType, moveModule, patchFit, patchLinks, patchRefs, type FitDoc, type FitModule, type Library, type MarketSelection, type ModState, type ProjectedItem } from '../fit/model';
 import { allowedStates } from '../fit/states';
 import type { FitStats } from '../engine/adapter';
-import { FloatMenu, fmt, Popover, Tabs, TypeIcon } from './common';
+import { FloatMenu, fmt, InlineEdit, Popover, Tabs, TypeIcon } from './common';
 import { applyImplantSet, saveUserImplantSets, useSdePresets, userImplantSets, type ImplantSet } from '../data/sdePresets';
 
 const SLOTS: [Slot, string][] = [['high', 'High slots'], ['mid', 'Mid slots'], ['low', 'Low slots'], ['rig', 'Rigs'], ['subsystem', 'Subsystems'], ['service', 'Services']];
 const STATE_ICON: Record<ModState, string> = { offline: '○', online: '◐', active: '●', overheated: 'HOT' };
 
 export interface FitProps {
-  ds: Dataset; fit: Fit; lib: Library; stats: FitStats | null;
-  onChange: (f: Fit) => void; onInfo: (id: number, ctx?: InfoCtx) => void;
+  ds: Dataset; fit: FitDoc; lib: Library; stats: FitStats | null;
+  onChange: (f: FitDoc) => void; onInfo: (id: number, ctx?: InfoCtx) => void;
   selection?: MarketSelection; onSelect?: (id: number, selection: MarketSelection, ctx?: InfoCtx) => void;
   onOpenVariations?: (id: number, selection: MarketSelection, ctx?: InfoCtx) => void;
+  onOpenAlternatives?: (id: number, selection: MarketSelection, ctx?: InfoCtx) => void;
 }
 
-function slotTotal(ds: Dataset, fit: Fit, stats: FitStats | null, s: Slot): number {
+/** ⇄n badge for items carrying an alternative (opens the compare strip's 可替代 tab). */
+function AltBadge({ fit, altId, onOpen }: { fit: FitDoc; altId?: string | null; onOpen: (e: React.MouseEvent) => void }) {
+  const alt = altId ? fit.alternatives.find((a) => a.id === altId) : null;
+  if (!alt) return null;
+  return <button className="mini alt-open" title={`${t('Alternatives')} (${alt.options.length} ${t('options')})`} onClick={onOpen}>⇄{alt.options.length}</button>;
+}
+
+function slotTotal(ds: Dataset, fit: FitDoc, stats: FitStats | null, s: Slot): number {
   const v = stats?.resources?.slots?.[s]?.total;
   if (v != null) return v;
   const attr = { high: 'hiSlots', mid: 'medSlots', low: 'lowSlots', rig: 'rigSlots', subsystem: 'maxSubSystems', service: 'serviceSlots' }[s];
-  return ds.attr(fit.ship_type_id, attr) ?? 0;
+  return ds.attr(fit.fit.ship.type_id, attr) ?? 0;
 }
 
 /** index of the module being dragged (rack position change, Pyfa drag and drop) */
 let dragFrom: number | null = null;
-const dropProps = (fit: Fit, slot: Slot, to: number | null, onChange: (f: Fit) => void) => ({
-  onDragOver: (e: React.DragEvent) => { if (dragFrom != null && fit.modules[dragFrom]?.slot === slot) e.preventDefault(); },
+const dropProps = (fit: FitDoc, slot: Slot, to: number | null, onChange: (f: FitDoc) => void) => ({
+  onDragOver: (e: React.DragEvent) => { if (dragFrom != null && fit.fit.modules[dragFrom]?.slot === slot) e.preventDefault(); },
   onDrop: (e: React.DragEvent) => { e.preventDefault(); if (dragFrom != null) onChange(moveModule(fit, dragFrom, to)); dragFrom = null; },
 });
 
@@ -61,6 +70,7 @@ function CtxMenu({ x, y, ds, m, vars, nIdentical, grouped, onGroup, onInfo, onCh
 
 function ModuleRow(p: { ds: Dataset; m: FitModule; idx: number; grp?: number[]; menu: { i: number; x: number; y: number } | null; setMenu: (v: { i: number; x: number; y: number } | null) => void } & FitProps) {
   const { ds, m, idx, grp, fit, stats, onChange, onInfo, menu, setMenu } = p;
+  const modules = fit.fit.modules;
   const charges = ds.chargesFor(m.type_id);
   const mutas = ds.mutaplasmidsFor(m.mutation?.base_type_id ?? m.type_id);
   const [showMuta, setShowMuta] = useState(false);
@@ -71,12 +81,12 @@ function ModuleRow(p: { ds: Dataset; m: FitModule; idx: number; grp?: number[]; 
     if ((e.target as HTMLElement).closest('button, input, select, label')) return;
     p.onSelect?.(m.type_id, { list: 'modules', index: idx }, { module: idx });
   };
-  const set = (patch: Partial<FitModule>) => onChange({ ...fit, modules: fit.modules.map((x, i) => (targets.includes(i) ? { ...x, ...patch } : x)) });
-  const remove = () => onChange({ ...fit, modules: fit.modules.filter((_, i) => !targets.includes(i)) });
-  const nIdentical = grp ? 0 : fit.modules.reduce((n, x) => n + (x.slot === m.slot && x.type_id === m.type_id && x.group == null ? 1 : 0), 0);
+  const set = (patch: Partial<FitModule>) => onChange(patchFit(fit, { modules: modules.map((x, i) => (targets.includes(i) ? { ...x, ...patch } : x)) }));
+  const remove = () => onChange(patchFit(fit, { modules: modules.filter((_, i) => !targets.includes(i)) }));
+  const nIdentical = grp ? 0 : modules.reduce((n, x) => n + (x.slot === m.slot && x.type_id === m.type_id && x.group == null ? 1 : 0), 0);
   const groupIdentical = () => {
-    const gid = 1 + fit.modules.reduce((mx, x) => Math.max(mx, x.group ?? 0), 0);
-    onChange({ ...fit, modules: fit.modules.map((x) => (x.slot === m.slot && x.type_id === m.type_id && x.group == null ? { ...x, group: gid } : x)) });
+    const gid = 1 + modules.reduce((mx, x) => Math.max(mx, x.group ?? 0), 0);
+    onChange(patchFit(fit, { modules: modules.map((x) => (x.slot === m.slot && x.type_id === m.type_id && x.group == null ? { ...x, group: gid } : x)) }));
   };
   const cycle = (dir: number) => {
     const allowed = allowedStates(ds, m.type_id);
@@ -100,7 +110,7 @@ function ModuleRow(p: { ds: Dataset; m: FitModule; idx: number; grp?: number[]; 
       onDragOver={(e) => {
         const id = draggedType.id;
         if (id != null && ds.kind(id) === 'charge' && ds.chargesFor(m.type_id).includes(id)) e.preventDefault();
-        else if (dragFrom != null && fit.modules[dragFrom]?.slot === m.slot) e.preventDefault();
+        else if (dragFrom != null && modules[dragFrom]?.slot === m.slot) e.preventDefault();
       }}
       onDrop={(e) => {
         const id = draggedType.id;
@@ -116,6 +126,7 @@ function ModuleRow(p: { ds: Dataset; m: FitModule; idx: number; grp?: number[]; 
         e.stopPropagation();
         p.onOpenVariations?.(m.type_id, { list: 'modules', index: idx }, { module: idx });
       }}>⇄{variations.length}</button>}
+      <AltBadge fit={fit} altId={m.alt_id} onOpen={(e) => { e.stopPropagation(); p.onOpenAlternatives?.(m.type_id, { list: 'modules', index: idx }, { module: idx }); }} />
       {m.charge_type_id ? <TypeIcon id={m.charge_type_id} size={18} /> : null}
       {charges.length > 0 && (
         <select value={m.charge_type_id ?? ''} onChange={(e) => set({ charge_type_id: e.target.value ? +e.target.value : null })}>
@@ -196,16 +207,16 @@ function ImplantSets({ ds, fit, onChange }: FitProps) {
     return zh + (s.complete ? '' : ` (${s.members.length}/6)`);
   };
   const all = [...user, ...sde.implant_sets];
-  const apply = (id: string) => { const s = all.find((x) => x.id === id); if (s) onChange({ ...fit, implants: applyImplantSet(fit.implants, s, slotOf) }); };
+  const apply = (id: string) => { const s = all.find((x) => x.id === id); if (s) onChange(patchFit(fit, { implants: applyImplantSet(fit.fit.implants, s, slotOf) })); };
   const save = (name: string) => {
-    if (!fit.implants.length) return;
+    if (!fit.fit.implants.length) return;
     if (!name.trim()) return;
     const set: ImplantSet = { id: 'user:' + Math.random().toString(36).slice(2, 8), name, grade: null, complete: true, user: true,
-      members: fit.implants.map((id) => ({ type_id: id, slot: slotOf(id) ?? 0 })) };
+      members: fit.fit.implants.map((id) => ({ type_id: id, slot: slotOf(id) ?? 0 })) };
     const next = [...user, set]; setUser(next); saveUserImplantSets(next); setSaveOpen(false); setSetName('');
   };
   const delUser = (id: string) => { const next = user.filter((x) => x.id !== id); setUser(next); saveUserImplantSets(next); };
-  if (!all.length && !fit.implants.length) return null;
+  if (!all.length && !fit.fit.implants.length) return null;
   return (
     <div className="implantsets">
       <select className="implantset" value="" onChange={(e) => e.target.value && apply(e.target.value)} title={t('Implant set')}>
@@ -213,7 +224,7 @@ function ImplantSets({ ds, fit, onChange }: FitProps) {
         {user.length > 0 && <optgroup label={t('Saved sets')}>{user.map((s) => <option key={s.id} value={s.id}>{label(s)}</option>)}</optgroup>}
         {sde.implant_sets.length > 0 && <optgroup label={t('Pirate / faction sets (SDE)')}>{sde.implant_sets.map((s) => <option key={s.id} value={s.id}>{label(s)}</option>)}</optgroup>}
       </select>
-      {fit.implants.length > 0 && <div className="popover-anchor">
+      {fit.fit.implants.length > 0 && <div className="popover-anchor">
         <button className="mini saveset" onClick={() => { setSetName(t('My implants')); setSaveOpen(true); }}>{t('Save implants as set')}</button>
         <Popover open={saveOpen} onClose={() => setSaveOpen(false)} className="implant-popover">
           <form onSubmit={(e) => { e.preventDefault(); save(setName); }}>
@@ -231,9 +242,10 @@ function ImplantSets({ ds, fit, onChange }: FitProps) {
 
 function Bays(p: FitProps) {
   const { ds, fit, onChange, onInfo } = p;
+  const f = fit.fit;
   const dehp = (i: number) => ehpTotal(p.stats?.drones?.items?.find((x: any) => x.drone_index === i));
   const fehp = (i: number) => ehpTotal(p.stats?.fighters?.items?.find((x: any) => x.fighter_index === i));
-  const rm = <K extends 'drones' | 'fighters' | 'implants' | 'boosters' | 'cargo'>(k: K, i: number) => onChange({ ...fit, [k]: (fit[k] as unknown[]).filter((_, j) => j !== i) });
+  const rm = <K extends 'drones' | 'fighters' | 'implants' | 'boosters' | 'cargo'>(k: K, i: number) => onChange(patchFit(fit, { [k]: (f[k] as unknown[]).filter((_, j) => j !== i) }));
   const [bm, setBm] = useState<{ x: number; y: number; id: number; del: () => void } | null>(null);
   const rowCtx = (e: React.MouseEvent, id: number, del: () => void) => { e.preventDefault(); setBm({ x: e.clientX, y: e.clientY, id, del }); };
   return (
@@ -245,20 +257,21 @@ function Bays(p: FitProps) {
           <button className="danger" onClick={() => { bm.del(); setBm(null); }}>{t('Remove')}</button>
         </FloatMenu>
       )}
-      {fit.drones.length > 0 && <div className="bay"><h4>{t('Drones')}</h4>{fit.drones.map((d, i) => (
+      {f.drones.length > 0 && <div className="bay"><h4>{t('Drones')}</h4>{f.drones.map((d, i) => (
         <div className={'mod' + (p.selection?.list === 'drones' && p.selection.index === i ? ' selected' : '')} key={i}
           onClick={(e) => { if (!(e.target as HTMLElement).closest('button, input, select, label')) p.onSelect?.(d.type_id, { list: 'drones', index: i }, { drone: i }); }}
           onContextMenu={(e) => rowCtx(e, d.type_id, () => rm('drones', i))}><TypeIcon id={d.type_id} size={18} /><span className="mname" title={ds.name(d.type_id)}>{ds.name(d.type_id)}</span>
-          <span>{t('qty')} <Qty value={d.quantity} min={1} onChange={(v) => onChange({ ...fit, drones: fit.drones.map((x, j) => (j === i ? { ...x, quantity: v, active: Math.min(x.active, v) } : x)) })} /></span>
-          <span>{t('active')} <Qty value={d.active} max={d.quantity} onChange={(v) => onChange({ ...fit, drones: fit.drones.map((x, j) => (j === i ? { ...x, active: v } : x)) })} /></span>
+          <AltBadge fit={fit} altId={d.alt_id} onOpen={(e) => { e.stopPropagation(); p.onOpenAlternatives?.(d.type_id, { list: 'drones', index: i }, { drone: i }); }} />
+          <span>{t('qty')} <Qty value={d.quantity} min={1} onChange={(v) => onChange(patchFit(fit, { drones: f.drones.map((x, j) => (j === i ? { ...x, quantity: v, active: Math.min(x.active, v) } : x)) }))} /></span>
+          <span>{t('active')} <Qty value={d.active} max={d.quantity} onChange={(v) => onChange(patchFit(fit, { drones: f.drones.map((x, j) => (j === i ? { ...x, active: v } : x)) }))} /></span>
           {dehp(i) != null && <span className="muted dehp" title={t('EHP of one drone (damage pattern of the fit)')}>{Math.round(dehp(i)!)} EHP</span>}
           <button className="mini" onClick={() => rm('drones', i)}>✕</button></div>))}</div>}
-      {fit.fighters.length > 0 && <div className="bay"><h4>{t('Fighters')}</h4>{fit.fighters.map((f, i) => (
+      {f.fighters.length > 0 && <div className="bay"><h4>{t('Fighters')}</h4>{f.fighters.map((f, i) => (
         <div className={'mod' + (p.selection?.list === 'fighters' && p.selection.index === i ? ' selected' : '')} key={i}
           onClick={(e) => { if (!(e.target as HTMLElement).closest('button, input, select, label')) p.onSelect?.(f.type_id, { list: 'fighters', index: i }); }}
           onContextMenu={(e) => rowCtx(e, f.type_id, () => rm('fighters', i))}><TypeIcon id={f.type_id} size={18} /><span className="mname" title={ds.name(f.type_id)}>{ds.name(f.type_id)}</span>
-          <span>{t('squadron')} <Qty value={f.quantity} min={1} onChange={(v) => onChange({ ...fit, fighters: fit.fighters.map((x, j) => (j === i ? { ...x, quantity: v } : x)) })} /></span>
-          <label><input type="checkbox" checked={f.active} onChange={(e) => onChange({ ...fit, fighters: fit.fighters.map((x, j) => (j === i ? { ...x, active: e.target.checked } : x)) })} /> {t('launched')}</label>
+          <span>{t('squadron')} <Qty value={f.quantity} min={1} onChange={(v) => onChange(patchFit(fit, { fighters: fit.fit.fighters.map((x, j) => (j === i ? { ...x, quantity: v } : x)) }))} /></span>
+          <label><input type="checkbox" checked={f.active} onChange={(e) => onChange(patchFit(fit, { fighters: fit.fit.fighters.map((x, j) => (j === i ? { ...x, active: e.target.checked } : x)) }))} /> {t('launched')}</label>
           {fehp(i) != null && <span className="muted fehp" title={t('EHP of one fighter (damage pattern of the fit)')}>{Math.round(fehp(i)!)} EHP</span>}
           <button className="mini" onClick={() => rm('fighters', i)}>✕</button>
           <div className="subopts">{ds.fighterAbilities(f.type_id).map((a, _k, all) => {
@@ -266,25 +279,26 @@ function Bays(p: FitProps) {
             const toggle = () => {
               const cur = f.abilities ?? all.filter((x) => x.default).map((x) => x.effect);
               const next = on ? cur.filter((x) => x !== a.effect) : [...cur, a.effect];
-              onChange({ ...fit, fighters: fit.fighters.map((x, j) => (j === i ? { ...x, abilities: next } : x)) });
+              onChange(patchFit(fit, { fighters: fit.fit.fighters.map((x, j) => (j === i ? { ...x, abilities: next } : x)) }));
             };
             return <label key={a.effect} title={`${t('effect')} ${a.effect}`}><input type="checkbox" className="ability" checked={on} onChange={toggle} /> {a.name}</label>;
           })}</div></div>))}</div>}
       <ImplantSets {...p} />
-      {(fit.implants.length > 0 || fit.boosters.length > 0) && <div className="bay"><h4>{t('Implants & boosters')}</h4>
-        {fit.implants.map((t, i) => <div className="mod" key={'i' + i} onContextMenu={(e) => rowCtx(e, t, () => rm('implants', i))}><TypeIcon id={t} size={18} /><span className="mname" onClick={() => onInfo(t)}>{ds.name(t)}</span><span className="muted">{tr('slot')} {ds.attr(t, 'implantness') ?? '?'}</span><button className="mini" onClick={() => rm('implants', i)}>✕</button></div>)}
-        {fit.boosters.map((b, i) => <div className="mod" key={'b' + i} onContextMenu={(e) => rowCtx(e, b.type_id, () => rm('boosters', i))}><TypeIcon id={b.type_id} size={18} /><span className="mname" onClick={() => onInfo(b.type_id)}>{ds.name(b.type_id)}</span><span className="muted">{t('booster slot')} {ds.attr(b.type_id, 'boosterness') ?? '?'}</span><button className="mini" onClick={() => rm('boosters', i)}>✕</button>
+      {(f.implants.length > 0 || f.boosters.length > 0) && <div className="bay"><h4>{t('Implants & boosters')}</h4>
+        {f.implants.map((t, i) => <div className="mod" key={'i' + i} onContextMenu={(e) => rowCtx(e, t, () => rm('implants', i))}><TypeIcon id={t} size={18} /><span className="mname" onClick={() => onInfo(t)}>{ds.name(t)}</span><span className="muted">{tr('slot')} {ds.attr(t, 'implantness') ?? '?'}</span><button className="mini" onClick={() => rm('implants', i)}>✕</button></div>)}
+        {f.boosters.map((b, i) => <div className="mod" key={'b' + i} onContextMenu={(e) => rowCtx(e, b.type_id, () => rm('boosters', i))}><TypeIcon id={b.type_id} size={18} /><span className="mname" onClick={() => onInfo(b.type_id)}>{ds.name(b.type_id)}</span><span className="muted">{t('booster slot')} {ds.attr(b.type_id, 'boosterness') ?? '?'}</span><button className="mini" onClick={() => rm('boosters', i)}>✕</button>
           <div className="subopts">{ds.boosterSideEffects(b.type_id).map((se) => {
             const on = (b.side_effects ?? []).includes(se.effect);
-            const toggle = () => onChange({ ...fit, boosters: fit.boosters.map((x, j) => (j === i ? { ...x, side_effects: on ? (x.side_effects ?? []).filter((e) => e !== se.effect) : [...(x.side_effects ?? []), se.effect] } : x)) });
+            const toggle = () => onChange(patchFit(fit, { boosters: f.boosters.map((x, j) => (j === i ? { ...x, side_effects: on ? (x.side_effects ?? []).filter((e) => e !== se.effect) : [...(x.side_effects ?? []), se.effect] } : x)) }));
             return <label key={se.effect}><input type="checkbox" className="sidefx" checked={on} onChange={toggle} /> {se.name}{se.chance != null ? ` (${Math.round(se.chance * 100)}%)` : ''}</label>;
           })}</div></div>)}
       </div>}
-      {fit.cargo.length > 0 && <div className="bay"><h4>{t('Cargo')}</h4>{fit.cargo.map((c, i) => (
+      {f.cargo.length > 0 && <div className="bay"><h4>{t('Cargo')}</h4>{f.cargo.map((c, i) => (
         <div className={'mod' + (p.selection?.list === 'cargo' && p.selection.index === i ? ' selected' : '')} key={i}
           onClick={(e) => { if (!(e.target as HTMLElement).closest('button, input, select, label')) p.onSelect?.(c.type_id, { list: 'cargo', index: i }); }}
           onContextMenu={(e) => rowCtx(e, c.type_id, () => rm('cargo', i))}><TypeIcon id={c.type_id} size={18} /><span className="mname" title={ds.name(c.type_id)}>{ds.name(c.type_id)}</span>
-          <span>x <Qty value={c.quantity} min={1} max={1e6} onChange={(v) => onChange({ ...fit, cargo: fit.cargo.map((x, j) => (j === i ? { ...x, quantity: v } : x)) })} /></span>
+          <AltBadge fit={fit} altId={c.alt_id} onOpen={(e) => { e.stopPropagation(); p.onOpenAlternatives?.(c.type_id, { list: 'cargo', index: i }); }} />
+          <span>x <Qty value={c.quantity} min={1} max={1e6} onChange={(v) => onChange(patchFit(fit, { cargo: f.cargo.map((x, j) => (j === i ? { ...x, quantity: v } : x)) }))} /></span>
           <button className="mini" onClick={() => rm('cargo', i)}>✕</button></div>))}</div>}
     </>
   );
@@ -292,11 +306,16 @@ function Bays(p: FitProps) {
 
 function Projected(p: FitProps & { addProjected: boolean; setAddProjected: (b: boolean) => void }) {
   const { ds, fit, lib, onChange, onInfo } = p;
+  const projected = fit.fit.projected;
+  const projectedFits = fit.links.projected_fits;
+  const boosterIds = fit.links.booster_fit_ids;
+  const buffs = fit.fit.fleet_buffs;
+  const env = fit.fit.environment;
   const beacons = Object.entries(ds.raw.environment?.effect_beacons ?? {}).sort((a, b) => a[1].kind.localeCompare(b[1].kind) || a[1].name.localeCompare(b[1].name));
   const others = Object.values(lib.fits).filter((f) => f.id !== fit.id);
   const [pf, setPf] = useState('');
   const [bf, setBf] = useState('');
-  const setP = (i: number, patch: object) => onChange({ ...fit, projected: fit.projected.map((x, j) => (j === i ? { ...x, ...patch } : x)) });
+  const setP = (i: number, patch: object) => onChange(patchFit(fit, { projected: projected.map((x, j) => (j === i ? { ...x, ...patch } as ProjectedItem : x)) }));
   const [pm, setPm] = useState<{ x: number; y: number; id: number | null; del: () => void } | null>(null);
   return (
     <div>
@@ -309,53 +328,61 @@ function Projected(p: FitProps & { addProjected: boolean; setAddProjected: (b: b
       )}
       <label className="toggle"><input type="checkbox" checked={p.addProjected} onChange={(e) => p.setAddProjected(e.target.checked)} /> {t('add items from the market as')} <b>{t('projected onto this fit')}</b></label>
       <h4>{t('Projected onto this fit')}</h4>
-      {fit.projected.length === 0 && <p className="muted">{t('Nothing projected. Turn on the toggle above and pick webs, paints, neuts, remote reps, drones… or project a saved fit.')}</p>}
-      {fit.projected.map((x, i) => (
-        <div className="mod" key={i} onContextMenu={(e) => { e.preventDefault(); setPm({ x: e.clientX, y: e.clientY, id: x.type_id ?? null, del: () => onChange({ ...fit, projected: fit.projected.filter((_, j) => j !== i) }) }); }}>
-          <span className="mname" onClick={() => x.type_id && onInfo(x.type_id)}>{x.kind === 'fit' ? `${t('Fit')}: ${lib.fits[x.fit_id!]?.name ?? t('(deleted)')}` : ds.name(x.type_id!)}</span>
+      {projected.length === 0 && projectedFits.length === 0 && <p className="muted">{t('Nothing projected. Turn on the toggle above and pick webs, paints, neuts, remote reps, drones… or project a saved fit.')}</p>}
+      {projected.map((x, i) => (
+        <div className="mod" key={i} onContextMenu={(e) => { e.preventDefault(); setPm({ x: e.clientX, y: e.clientY, id: x.type_id ?? null, del: () => onChange(patchFit(fit, { projected: projected.filter((_, j) => j !== i) })) }); }}>
+          <span className="mname" onClick={() => x.type_id && onInfo(x.type_id)}>{ds.name(x.type_id!)}</span>
           <span>×<Qty value={x.amount} min={1} max={50} onChange={(v) => setP(i, { amount: v })} /></span>
           <span>{t('at')} <input className="qty wide" type="number" min={0} step={500} value={x.distance_m ?? ''} placeholder={t('any')} onChange={(e) => setP(i, { distance_m: e.target.value === '' ? null : +e.target.value })} /> m</span>
-          <button className="mini" onClick={() => onChange({ ...fit, projected: fit.projected.filter((_, j) => j !== i) })}>✕</button>
+          <button className="mini" onClick={() => onChange(patchFit(fit, { projected: projected.filter((_, j) => j !== i) }))}>✕</button>
+        </div>
+      ))}
+      {projectedFits.map((x, i) => (
+        <div className="mod" key={'pf' + i} onContextMenu={(e) => { e.preventDefault(); setPm({ x: e.clientX, y: e.clientY, id: null, del: () => onChange(patchLinks(fit, { projected_fits: projectedFits.filter((_, j) => j !== i) })) }); }}>
+          <span className="mname">{t('Fit')}: {lib.fits[x.fit_id]?.name ?? t('(deleted)')}</span>
+          <span>×<Qty value={x.amount} min={1} max={50} onChange={(v) => onChange(patchLinks(fit, { projected_fits: projectedFits.map((y, j) => (j === i ? { ...y, amount: v } : y)) }))} /></span>
+          <span>{t('at')} <input className="qty wide" type="number" min={0} step={500} value={x.distance_m ?? ''} placeholder={t('any')} onChange={(e) => onChange(patchLinks(fit, { projected_fits: projectedFits.map((y, j) => (j === i ? { ...y, distance_m: e.target.value === '' ? null : +e.target.value } : y)) }))} /> m</span>
+          <button className="mini" onClick={() => onChange(patchLinks(fit, { projected_fits: projectedFits.filter((_, j) => j !== i) }))}>✕</button>
         </div>
       ))}
       <div className="row">
-        <select value={pf} onChange={(e) => setPf(e.target.value)}><option value="">{t('project a saved fit…')}</option>{others.map((f) => <option key={f.id} value={f.id}>{f.name} ({ds.name(f.ship_type_id)})</option>)}</select>
-        <button disabled={!pf} onClick={() => { onChange({ ...fit, projected: [...fit.projected, { kind: 'fit', fit_id: pf, amount: 1, distance_m: 10000 }] }); setPf(''); }}>{t('Project fit')}</button>
+        <select value={pf} onChange={(e) => setPf(e.target.value)}><option value="">{t('project a saved fit…')}</option>{others.map((f) => <option key={f.id} value={f.id}>{f.name} ({ds.name(f.fit.ship.type_id)})</option>)}</select>
+        <button disabled={!pf} onClick={() => { onChange(patchLinks(fit, { projected_fits: [...projectedFits, { fit_id: pf, amount: 1, distance_m: 10000 }] })); setPf(''); }}>{t('Project fit')}</button>
       </div>
       <h4>{t('Fleet boosters (command bursts)')}</h4>
-      {fit.fleet.booster_fit_ids.map((id) => (
+      {boosterIds.map((id) => (
         <div className="mod" key={id}><span className="mname">{lib.fits[id]?.name ?? t('(deleted)')}</span>
-          <button className="mini" onClick={() => onChange({ ...fit, fleet: { ...fit.fleet, booster_fit_ids: fit.fleet.booster_fit_ids.filter((x) => x !== id) } })}>✕</button></div>
+          <button className="mini" onClick={() => onChange(patchLinks(fit, { booster_fit_ids: boosterIds.filter((x) => x !== id) }))}>✕</button></div>
       ))}
       <div className="row">
-        <select value={bf} onChange={(e) => setBf(e.target.value)}><option value="">{t('add booster fit…')}</option>{others.map((f) => <option key={f.id} value={f.id}>{f.name} ({ds.name(f.ship_type_id)})</option>)}</select>
-        <button disabled={!bf} onClick={() => { onChange({ ...fit, fleet: { ...fit.fleet, booster_fit_ids: [...new Set([...fit.fleet.booster_fit_ids, bf])] } }); setBf(''); }}>{t('Add booster')}</button>
+        <select value={bf} onChange={(e) => setBf(e.target.value)}><option value="">{t('add booster fit…')}</option>{others.map((f) => <option key={f.id} value={f.id}>{f.name} ({ds.name(f.fit.ship.type_id)})</option>)}</select>
+        <button disabled={!bf} onClick={() => { onChange(patchLinks(fit, { booster_fit_ids: [...new Set([...boosterIds, bf])] })); setBf(''); }}>{t('Add booster')}</button>
       </div>
       <h4>{t('Manual fleet buffs')}</h4>
-      {fit.fleet.buffs.map((b, i) => (
+      {buffs.map((b, i) => (
         <div className="mod" key={'fb' + i}><span className="mname">{ds.warfareBuffs().find(([k]) => k === b.buff_id)?.[1] ?? `${t('buff')} ${b.buff_id}`}</span>
-          <input className="qty wide" type="number" step={1} value={b.value} onChange={(e) => onChange({ ...fit, fleet: { ...fit.fleet, buffs: fit.fleet.buffs.map((x, j) => (j === i ? { ...x, value: +e.target.value } : x)) } })} />
-          <button className="mini" onClick={() => onChange({ ...fit, fleet: { ...fit.fleet, buffs: fit.fleet.buffs.filter((_, j) => j !== i) } })}>✕</button></div>
+          <input className="qty wide" type="number" step={1} value={b.value} onChange={(e) => onChange(patchFit(fit, { fleet_buffs: buffs.map((x, j) => (j === i ? { ...x, value: +e.target.value } : x)) }))} />
+          <button className="mini" onClick={() => onChange(patchFit(fit, { fleet_buffs: buffs.filter((_, j) => j !== i) }))}>✕</button></div>
       ))}
       <div className="row">
-        <select className="buffsel" value="" onChange={(e) => e.target.value && onChange({ ...fit, fleet: { ...fit.fleet, buffs: [...fit.fleet.buffs, { buff_id: +e.target.value, value: -10 }] } })}>
+        <select className="buffsel" value="" onChange={(e) => e.target.value && onChange(patchFit(fit, { fleet_buffs: [...buffs, { buff_id: +e.target.value, value: -10 }] }))}>
           <option value="">{t('add a warfare buff (value as in-game %, e.g. -10)…')}</option>
           {ds.warfareBuffs().map(([k, n]) => <option key={k} value={k}>{n}</option>)}
         </select>
       </div>
       <h4>{t('Environment')}</h4>
       <div className="row">
-        <select value="" onChange={(e) => e.target.value && onChange({ ...fit, environment: [...new Set([...fit.environment, +e.target.value])] })}>
+        <select value="" onChange={(e) => e.target.value && onChange(patchFit(fit, { environment: { ...env, effect_type_ids: [...new Set([...env.effect_type_ids, +e.target.value])] } }))}>
           <option value="">{t('add system effect / beacon…')}</option>
           {beacons.map(([k, b]) => <option key={k} value={k}>[{b.kind}] {ds.name(+k)}</option>)}
         </select>
-        <select value={fit.system_security ?? ''} onChange={(e) => onChange({ ...fit, system_security: (e.target.value || null) as Fit['system_security'] })}>
+        <select value={env.system_security ?? ''} onChange={(e) => onChange(patchFit(fit, { environment: { ...env, system_security: (e.target.value || null) as FitDoc['fit']['environment']['system_security'] } }))}>
           <option value="">{t('security: default (nullsec)')}</option><option value="hisec">{t('hisec')}</option><option value="lowsec">{t('lowsec')}</option><option value="nullsec">{t('nullsec')}</option><option value="wspace">{t('w-space')}</option>
         </select>
       </div>
-      {fit.environment.map((id) => (
+      {env.effect_type_ids.map((id) => (
         <div className="mod" key={id}><span className="mname" onClick={() => onInfo(id)}>{ds.name(id)}</span><span className="muted">{ds.raw.environment?.effect_beacons?.[id]?.kind}</span>
-          <button className="mini" onClick={() => onChange({ ...fit, environment: fit.environment.filter((x) => x !== id) })}>✕</button></div>
+          <button className="mini" onClick={() => onChange(patchFit(fit, { environment: { ...env, effect_type_ids: env.effect_type_ids.filter((x) => x !== id) } }))}>✕</button></div>
       ))}
     </div>
   );
@@ -366,8 +393,9 @@ export function Fitting(p: FitProps & { addProjected: boolean; setAddProjected: 
   const [tab, setTab] = useState<'fit' | 'proj' | 'opts'>('fit');
   const [menu, setMenu] = useState<{ i: number; x: number; y: number } | null>(null);
   const [shipMenu, setShipMenu] = useState<{ x: number; y: number } | null>(null);
-  const shipVars = ds.variations(fit.ship_type_id);
-  const modes = ds.skills.length ? Object.entries(ds.raw.types).filter(([, t]) => t.group === 1306 && t.name.startsWith(ds.name(fit.ship_type_id, 'en') + ' ')).map(([k]) => +k) : [];
+  const ship = fit.fit.ship;
+  const shipVars = ds.variations(ship.type_id);
+  const modes = ds.skills.length ? Object.entries(ds.raw.types).filter(([, t]) => t.group === 1306 && t.name.startsWith(ds.name(ship.type_id, 'en') + ' ')).map(([k]) => +k) : [];
   // Pyfa: dropping a market item anywhere on the fitting canvas adds it to its natural slot/bay
   // (a charge dropped on a module row is handled by the row itself).
   const dropItem = {
@@ -384,41 +412,50 @@ export function Fitting(p: FitProps & { addProjected: boolean; setAddProjected: 
   return (
     <div className="fitting" {...dropItem}>
       <div className="fithead">
-        <span className="ship" onClick={() => p.onInfo(fit.ship_type_id, { ship: true })} onContextMenu={(e) => { e.preventDefault(); setShipMenu({ x: e.clientX, y: e.clientY }); }}>{ds.name(fit.ship_type_id)}</span>
+        <span className="ship" onClick={() => p.onInfo(ship.type_id, { ship: true })} onContextMenu={(e) => { e.preventDefault(); setShipMenu({ x: e.clientX, y: e.clientY }); }}>{ds.name(ship.type_id)}</span>
         {shipMenu && (
           <FloatMenu x={shipMenu.x} y={shipMenu.y} onClose={() => setShipMenu(null)}>
-            <div className="ctxhead">{ds.name(fit.ship_type_id)}</div>
-            <button onClick={() => { p.onInfo(fit.ship_type_id, { ship: true }); setShipMenu(null); }}>{t('Show info')}</button>
+            <div className="ctxhead">{ds.name(ship.type_id)}</div>
+            <button onClick={() => { p.onInfo(ship.type_id, { ship: true }); setShipMenu(null); }}>{t('Show info')}</button>
             {shipVars.length > 1 && (
               <div className="ctxgroup">
                 <div className="ctxlabel">{t('Change ship')}</div>
-                {shipVars.map((v) => <button key={v} className={v === fit.ship_type_id ? 'on' : ''} onClick={() => { onChange({ ...fit, ship_type_id: v }); setShipMenu(null); }}>{ds.name(v)}</button>)}
+                {shipVars.map((v) => <button key={v} className={v === ship.type_id ? 'on' : ''} onClick={() => { onChange(patchFit(fit, { ship: { ...ship, type_id: v } })); setShipMenu(null); }}>{ds.name(v)}</button>)}
               </div>
             )}
           </FloatMenu>
         )}
         <input value={fit.name} onChange={(e) => onChange({ ...fit, name: e.target.value })} />
+        {fit.branches.length > 0 && (
+          <select className="branchsel" value={fit.active_branch ?? ''} title={t('Branch')}
+            onChange={(e) => { const v = e.target.value; if (v) onChange(applyBranch(fit, v)); }}>
+            {!fit.active_branch && <option value="">{t('branch…')}</option>}
+            {fit.branches.map((b) => <option key={b.id} value={b.id}>{b.name}{fit.active_branch === b.id && branchDiverged(fit) ? ' *' : ''}</option>)}
+          </select>
+        )}
+        {fit.active_branch && branchDiverged(fit) && <span className="diverged" title={t('current state differs from this branch')}>*</span>}
+        {fit.alternatives.length > 0 && <InlineEdit className="branch-save" value="" placeholder={t('Save as branch')} onCommit={(v) => { if (v) onChange(captureBranch(fit, v)); }} />}
         {modes.length > 0 && (
-          <select value={fit.mode_type_id ?? ''} onChange={(e) => onChange({ ...fit, mode_type_id: e.target.value ? +e.target.value : null })}>
+          <select value={ship.mode_type_id ?? ''} onChange={(e) => onChange(patchFit(fit, { ship: { ...ship, mode_type_id: e.target.value ? +e.target.value : null } }))}>
             <option value="">{t('mode: default')}</option>{modes.map((m) => <option key={m} value={m}>{ds.name(m)}</option>)}
           </select>
         )}
-        <select value={fit.character_id} onChange={(e) => onChange({ ...fit, character_id: e.target.value })} title={t('Character')}>
+        <select value={fit.refs.character_id} onChange={(e) => onChange(patchRefs(fit, { character_id: e.target.value }))} title={t('Character')}>
           {Object.values(lib.characters).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
-        <select value={fit.damage_pattern_id} onChange={(e) => onChange({ ...fit, damage_pattern_id: e.target.value })} title={t('Damage pattern (incoming)')}>
-          {Object.values(lib.damagePatterns).filter((d) => !d.id.startsWith('sde:') || d.id === fit.damage_pattern_id).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+        <select value={fit.refs.damage_pattern_id} onChange={(e) => onChange(patchRefs(fit, { damage_pattern_id: e.target.value }))} title={t('Damage pattern (incoming)')}>
+          {Object.values(lib.damage_patterns).filter((d) => !d.id.startsWith('sde:') || d.id === fit.refs.damage_pattern_id).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
         </select>
-        <select value={fit.target_profile_id} onChange={(e) => onChange({ ...fit, target_profile_id: e.target.value })} title={t('Target profile (outgoing)')}>
-          {Object.values(lib.targetProfiles).filter((x) => !x.id.startsWith('sde:') || x.id === fit.target_profile_id).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+        <select value={fit.refs.target_profile_id} onChange={(e) => onChange(patchRefs(fit, { target_profile_id: e.target.value }))} title={t('Target profile (outgoing)')}>
+          {Object.values(lib.target_profiles).filter((x) => !x.id.startsWith('sde:') || x.id === fit.refs.target_profile_id).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
         </select>
       </div>
-      <Tabs tabs={[['fit', t('Fitting')], ['proj', `${t('Projected / fleet / environment')} (${fit.projected.length + fit.fleet.booster_fit_ids.length + fit.environment.length})`], ['opts', t('Options')]]} value={tab} onChange={setTab} />
+      <Tabs tabs={[['fit', t('Fitting')], ['proj', `${t('Projected / fleet / environment')} (${fit.fit.projected.length + fit.links.projected_fits.length + fit.links.booster_fit_ids.length + fit.fit.environment.effect_type_ids.length})`], ['opts', t('Options')]]} value={tab} onChange={setTab} />
       {tab === 'fit' && (
         <>
           {SLOTS.map(([s, label]) => {
             const total = slotTotal(ds, fit, stats, s);
-            const mods = fit.modules.map((m, i) => [m, i] as const).filter(([m]) => m.slot === s);
+            const mods = fit.fit.modules.map((m, i) => [m, i] as const).filter(([m]) => m.slot === s);
             if (!total && !mods.length) return null;
             return (
               <div className="slotgroup" key={s}>
@@ -445,9 +482,9 @@ export function Fitting(p: FitProps & { addProjected: boolean; setAddProjected: 
       {tab === 'proj' && <Projected {...p} />}
       {tab === 'opts' && (
         <div className="opts">
-          <label><input type="checkbox" checked={fit.options.factor_reload} onChange={(e) => onChange({ ...fit, options: { ...fit.options, factor_reload: e.target.checked } })} /> {t('factor in reload time')}</label>
-          <label>{t('default spool-up')} <input type="range" min={0} max={1} step={0.05} value={fit.options.spool} onChange={(e) => onChange({ ...fit, options: { ...fit.options, spool: +e.target.value } })} /> {(fit.options.spool * 100).toFixed(0)}%</label>
-          <label>{t('reactive armor hardener')} <select value={fit.options.rah} onChange={(e) => onChange({ ...fit, options: { ...fit.options, rah: e.target.value as 'adapt' | 'disable' } })}><option value="adapt">{t('adapt to damage pattern')}</option><option value="disable">{t('unadapted')}</option></select></label>
+          <label><input type="checkbox" checked={fit.fit.options.factor_reload} onChange={(e) => onChange(patchFit(fit, { options: { ...fit.fit.options, factor_reload: e.target.checked } }))} /> {t('factor in reload time')}</label>
+          <label>{t('default spool-up')} <input type="range" min={0} max={1} step={0.05} value={fit.fit.options.spool} onChange={(e) => onChange(patchFit(fit, { options: { ...fit.fit.options, spool: +e.target.value } }))} /> {(fit.fit.options.spool * 100).toFixed(0)}%</label>
+          <label>{t('reactive armor hardener')} <select value={fit.fit.options.rah} onChange={(e) => onChange(patchFit(fit, { options: { ...fit.fit.options, rah: e.target.value as 'adapt' | 'disable' } }))}><option value="adapt">{t('adapt to damage pattern')}</option><option value="disable">{t('unadapted')}</option></select></label>
           <label>{t('notes')}<textarea value={fit.notes ?? ''} onChange={(e) => onChange({ ...fit, notes: e.target.value })} /></label>
         </div>
       )}

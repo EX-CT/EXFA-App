@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { t } from '../i18n';
 import type { Engine, FitStats, GraphRequest, GraphResult, GraphSpecs } from '../engine/adapter';
-import { toRequest, type Library, type TargetProfile } from '../fit/model';
+import { requestFor, type Library, type TargetProfile } from '../fit/model';
 import { LineChart, type ChartSeries } from './common';
 
 const KINDS = [
@@ -58,10 +58,10 @@ export function Graphs({ st, target, engine, request, engineReady, lib, fitId }:
   const fitName = (fitId && lib?.fits[fitId]?.name) || 'fit';
   const others = lib ? Object.values(lib.fits).filter((f) => f.id !== fitId) : [];
   const ov = overlay.filter((id) => lib?.fits[id] && id !== fitId);
-  const srcs = useMemo<Src[]>(() => (request ? [{ id: fitId ?? '', name: fitName, req: request }, ...ov.map((id) => ({ id, name: lib!.fits[id].name, req: toRequest(lib!.fits[id], lib!) }))] : []),
+  const srcs = useMemo<Src[]>(() => (request ? [{ id: fitId ?? '', name: fitName, req: request }, ...ov.map((id) => ({ id, name: lib!.fits[id].name, req: requestFor(lib!, lib!.fits[id]) }))] : []),
     [request, ov.join(','), lib, fitName]); // eslint-disable-line react-hooks/exhaustive-deps
   const multi = srcs.length > 1;
-  const tgtFitReq = useMemo(() => (targetFit && lib?.fits[targetFit] ? toRequest(lib.fits[targetFit], lib) : null), [targetFit, lib]);
+  const tgtFitReq = useMemo(() => (targetFit && lib?.fits[targetFit] ? requestFor(lib, lib.fits[targetFit]) : null), [targetFit, lib]);
 
   const plans = useMemo<{ plans: Plan[]; x: string; y: string } | null>(() => {
     if (!st || st.error) return null;

@@ -552,7 +552,7 @@ const zhUi = await p.evaluate(() => ({ tabs: [...document.querySelectorAll('.tab
 await clickText('.center .tabs button', '导入 / 导出');
 const zhIo = await p.evaluate(() => [...document.querySelectorAll('.import-export button')].map((x) => x.textContent));
 await langSel('en');
-const latin = (xs) => xs.filter((x) => /[a-z]{3,}/.test(x.replace(/DPS|EFT|DNA|ESI|JSON|XML|Ctrl/g, '')));
+const latin = (xs) => xs.filter((x) => /[a-z]{3,}/.test(x.replace(/DPS|EFT|DNA|ESI|JSON|XML|Ctrl|zip|exfa/gi, '')));
 const zhAll = [...zhUi.tabs, ...zhUi.sections, ...zhUi.slots, ...zhIo];
 check('web.e2e.zh-ui: zh-CN UI (dock tabs, stats sections, slots, import/export controls) has no untranslated labels',
   zhUi.tabs.includes('对比栏') && zhUi.tabs.includes('配置对比') && zhUi.sections.length > 3 && zhIo.includes('导入') && latin(zhAll).length === 0,
@@ -617,7 +617,6 @@ const found = (await libFits()).map((f) => f.name);
 await setIn('.fitbrowser .search', '');
 check('web.e2e.library-search-tags: tag filter and search (ship name)', tagged.join() === 'Renamed Rifter' && found.join() === 'Pyfa Thanatos', `${tagged} | ${found}`);
 await p.evaluate(() => document.querySelector('details.lib-folder[data-folder="PvP/Frigates"] .lib-folder-rename').click());
-await p.click('details.lib-folder[data-folder="PvP/Frigates"] .inline-edit');
 await setIn('details.lib-folder[data-folder="PvP/Frigates"] input.inline-edit-input', 'PvP/Small');
 await p.keyboard.press('Enter');
 await p.waitForFunction((id) => [...document.querySelectorAll('.lib-fit')].some((x) => x.dataset.fitId === id && x.closest('details')?.dataset.folder === 'PvP/Small'), { timeout: 10000 }, rif.id);
@@ -684,7 +683,42 @@ await (await p.$('.lib-import-file')).uploadFile(bkFile);
 await new Promise((r) => setTimeout(r, 800));
 const na = (await libFits()).length;
 const bj = JSON.parse(bk?.text || '{}');
-check('web.e2e.library-backup-restore: JSON backup (v2: folders, tags) restores without duplicating fits', bj.version === 2 && bj.lib?.folders?.includes('PvP/Small') && Object.keys(bj.lib.fits).length === nb && na === nb, `${nb} fits, after restore ${na}`);
+check('web.e2e.library-backup-restore: JSON backup (v3: folders, tags, fleets) restores without duplicating fits', bj.version === 3 && bj.lib?.folders?.includes('PvP/Small') && Object.keys(bj.lib.fits).length === nb && na === nb, `${nb} fits, after restore ${na}`);
+
+// Stage D import/export: current fit as an .exfa.json document, library as a .zip (fflate + format toFiles),
+// and the zip importing back through the Fits browser merge (same ids -> skipped, no duplicates).
+const dlDir = fs.mkdtempSync(path.join(os.tmpdir(), 'exfa-e2e-dl-'));
+try {
+  const cdp = await p.createCDPSession();
+  try { await cdp.send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: dlDir }); }
+  catch { await cdp.send('Page.setDownloadBehavior', { behavior: 'allow', downloadPath: dlDir }); }
+  const waitFile = (ext) => new Promise((res) => {
+    const t = setInterval(() => {
+      const f = fs.readdirSync(dlDir).find((x) => x.endsWith(ext) && !x.endsWith('.crdownload'));
+      if (f) { clearInterval(t); res(f); }
+    }, 100);
+    setTimeout(() => { clearInterval(t); res(null); }, 15000);
+  });
+  await clickText('.center .tabs button', 'Import-export');
+  await p.click('.export-exfa');
+  const docFile = await waitFile('.exfa.json');
+  const docJson = docFile ? JSON.parse(fs.readFileSync(path.join(dlDir, docFile), 'utf8')) : null;
+  check('web.e2e.exfa-export: current fit exports as an exfa/fit@1 .exfa.json document', docJson?.format === 'exfa/fit@1' && !!docJson?.id && !!docJson?.fit?.ship?.type_id, docFile ?? 'no file');
+  await p.click('.export-zip');
+  const zipFile = await waitFile('.zip');
+  const zipBytes = zipFile ? fs.readFileSync(path.join(dlDir, zipFile)) : null;
+  check('web.e2e.zip-export: the library exports as a real .zip archive (fflate + toFiles layout)', !!zipBytes && zipBytes[0] === 0x50 && zipBytes[1] === 0x4b, zipFile ?? 'no file');
+  await clickText('.left .tabs button', 'Fits');
+  await p.waitForSelector('.lib-import-file', { timeout: 15000 });
+  const nPre = (await libFits()).length;
+  await (await p.$('.lib-import-file')).uploadFile(path.join(dlDir, zipFile));
+  await p.waitForFunction(() => /skipped|跳过/.test(document.querySelector('.lib-msg')?.textContent ?? ''), { timeout: 15000 }).catch(() => null);
+  const zipMsg = await p.evaluate(() => document.querySelector('.lib-msg')?.textContent ?? '');
+  const nPost = (await libFits()).length;
+  check('web.e2e.zip-import-merge: importing the library zip merges by id without duplicating (skipped count shown)', zipFile && nPre === nPost && /skipped|跳过/.test(zipMsg), `${nPre} -> ${nPost}, msg: ${zipMsg}`);
+} finally {
+  fs.rmSync(dlDir, { recursive: true, force: true });
+}
 
 // DNA import (dialog): a fit's DNA, plain and as an in-game fitting link; each gives the same
 // fit back (DNA round trip, drones launched, same stats for both)

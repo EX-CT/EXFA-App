@@ -5,7 +5,8 @@ import { Dataset } from './data/dataset';
 import { createEngine, enginePricesLoad, type Engine, type FitStats } from './engine/adapter';
 import { fetchLatestSnapshot, loadPriceSettings, savePriceSettings, PRICE_REFRESH_MS, SNAPSHOT_URL, type PriceSettings } from './data/prices';
 import { importFit, setEngineFormatsRpc } from './formats';
-import { applyMarketPick, newFit, toRequest, uid, type Fit, type Library, type MarketMode, type MarketSelection } from './fit/model';
+import { addAlternative, recordHistory } from '@exfa/format';
+import { applyMarketPick, newFit, patchFit, requestFor, uid, type FitDoc, type Library, type MarketMode, type MarketSelection, type ModState } from './fit/model';
 import { useAppState } from './store';
 import { CharacterEditor } from './ui/Character';
 import { Fitting } from './ui/Fitting';
@@ -73,19 +74,19 @@ export default function App() {
   const swapInfoType = (v: number) => {
     const ctx = infoState?.ctx;
     if (!fit || ctx?.module == null) return;
-    const cur = fit.modules[ctx.module];
+    const cur = fit.fit.modules[ctx.module];
     const members = cur?.group != null
-      ? new Set(fit.modules.map((m, i) => (m.group === cur.group ? i : -1)).filter((i) => i >= 0))
+      ? new Set(fit.fit.modules.map((m, i) => (m.group === cur.group ? i : -1)).filter((i) => i >= 0))
       : new Set([ctx.module]);
-    setFit({ ...fit, modules: fit.modules.map((m, i) => (members.has(i) ? { ...m, type_id: v, mutation: null } : m)) });
+    setFit(patchFit(fit, { modules: fit.fit.modules.map((m, i) => (members.has(i) ? { ...m, type_id: v, mutation: null } : m)) }));
     setInfo(v, ctx);
   };
   const [build, setBuild] = useState<BuildInfo | null>(null);
   useEffect(() => { fetch(`${import.meta.env.BASE_URL}build-info.json`).then((r) => (r.ok ? r.json() : null)).then(setBuild, () => {}); }, []);
   // SDE-derived NPC damage / target profiles (EXFA-Data presets.json) join the built-in profiles (not persisted).
   useEffect(() => { loadSdePresets().then((p) => update((s) => ({ ...s, lib: { ...s.lib,
-    damagePatterns: { ...s.lib.damagePatterns, ...Object.fromEntries(p.damage.map((d) => [d.id, d])) },
-    targetProfiles: { ...s.lib.targetProfiles, ...Object.fromEntries(p.targets.map((t) => [t.id, t])) } } }))); }, [update]);
+    damage_patterns: { ...s.lib.damage_patterns, ...Object.fromEntries(p.damage.map((d) => [d.id, d])) },
+    target_profiles: { ...s.lib.target_profiles, ...Object.fromEntries(p.targets.map((t) => [t.id, t])) } } }))); }, [update]);
   const [addProjected, setAddProjected] = useState(false);
   // prices (engine price block, docs/23): local "my prices" overrides + optional injected latest market snapshot
   const [priceSet, setPriceSetState] = useState<PriceSettings>(() => loadPriceSettings());
@@ -128,12 +129,18 @@ export default function App() {
   }, [ecfg.datasetUrl, ecfg.wasmUrl]);
 
   const setLib = useCallback((l: Library) => update((s) => ({ ...s, lib: l })), [update]);
-  const putFit = useCallback((f: Fit) => update((s) => ({ ...s, lib: { ...s.lib, fits: { ...s.lib.fits, [f.id]: { ...f, modified: new Date().toISOString() } } } })), [update]);
+  // Every save records the previous payload into the document's history (format recordHistory groups rapid edits).
+  const putFit = useCallback((f: FitDoc) => update((s) => {
+    const prev = s.lib.fits[f.id];
+    const next = { ...f, modified: new Date().toISOString() };
+    const recorded = prev ? recordHistory(prev, next) : next;
+    return { ...s, lib: { ...s.lib, fits: { ...s.lib.fits, [f.id]: recorded } } };
+  }), [update]);
   // undo / redo per fit (rapid changes such as slider drags are coalesced)
   const stateRef = useRef(state); stateRef.current = state;
-  const hist = useRef<Record<string, { past: Fit[]; future: Fit[]; at: number }>>({});
+  const hist = useRef<Record<string, { past: FitDoc[]; future: FitDoc[]; at: number }>>({});
   const [, setHistTick] = useState(0);
-  const setFit = useCallback((f: Fit, checkpoint = false) => {
+  const setFit = useCallback((f: FitDoc, checkpoint = false) => {
     const prev = stateRef.current.lib.fits[f.id];
     const h = (hist.current[f.id] ??= { past: [], future: [], at: 0 });
     const now = Date.now();
@@ -169,7 +176,7 @@ export default function App() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [undoRedo, update]);
-  const addFit = useCallback((f: Fit) => { const now = new Date().toISOString(); f = { ...f, created: f.created ?? now, modified: f.modified ?? now }; update((s) => ({ ...s, lib: { ...s.lib, fits: { ...s.lib.fits, [f.id]: f } }, settings: { ...s.settings, activeFitId: f.id } })); }, [update]);
+  const addFit = useCallback((f: FitDoc) => { const now = new Date().toISOString(); f = { ...f, created: f.created ?? now, modified: f.modified ?? now }; update((s) => ({ ...s, lib: { ...s.lib, fits: { ...s.lib.fits, [f.id]: f } }, settings: { ...s.settings, activeFitId: f.id } })); }, [update]);
 
   // First visit / share link: format input is parsed by the Engine worker before the first calc.
   useEffect(() => {
@@ -195,7 +202,7 @@ export default function App() {
 
   const request = useMemo(() => {
     if (!fit) return null;
-    const r = toRequest(fit, lib);
+    const r = requestFor(lib, fit);
     return { ...r, options: { ...(r.options as object), price: true }, ...(priceSet.mine.length ? { price_overrides: priceSet.mine } : {}) };
   }, [fit, lib, priceSet.mine]);
   const reqJson = useMemo(() => JSON.stringify(request), [request]);
@@ -326,28 +333,42 @@ export default function App() {
     setStripTab('variations');
     setDockTab('strip');
   };
+  const openAlternatives = (id: number, selection: MarketSelection, ctx?: InfoCtx) => {
+    setSel(selection);
+    locateType(id, ctx);
+    setStripTab('alternatives');
+    setDockTab('strip');
+  };
+  /** "+ 可替代": add the row's type as an option of the selected item's Alternative (format addAlternative). */
+  const addAlternativeOption = (typeId: number) => {
+    const s = stateRef.current;
+    const f = s.settings.activeFitId ? s.lib.fits[s.settings.activeFitId] : null;
+    if (!f || !sel || sel.list === 'fighters') return;
+    setFit(addAlternative(f, { list: sel.list, index: sel.index }, [typeId]), true);
+    notify({ kind: 'ok', text: `${t('Alternatives')}: + ${ds?.name(typeId) ?? typeId}`, action: { label: t('Undo'), onClick: () => undoRedo('undo') } });
+  };
   const writeBackAdjustments = () => {
     if (!fit || !stats?.adjustments?.length) return;
     const previous = fit;
-    let next = { ...fit };
+    let nf = { ...fit.fit };
     let count = 0;
     const implants = new Set<number>(), boosters = new Set<number>();
     for (const adjustment of stats.adjustments as { code: string; path: string; to: unknown }[]) {
       let match: RegExpMatchArray | null;
       if (adjustment.code === 'STATE_CLAMPED' && (match = adjustment.path.match(/^\/modules\/(\d+)\/state$/))) {
-        const index = Number(match[1]), state = adjustment.to as Fit['modules'][number]['state'];
-        if (next.modules[index] && next.modules[index].state !== state) {
-          next = { ...next, modules: next.modules.map((m, i) => i === index ? { ...m, state } : m) }; count++;
+        const index = Number(match[1]), state = adjustment.to as ModState;
+        if (nf.modules[index] && nf.modules[index].state !== state) {
+          nf = { ...nf, modules: nf.modules.map((m, i) => i === index ? { ...m, state } : m) }; count++;
         }
       } else if (adjustment.code === 'FIGHTER_QUANTITY_CLAMPED' && (match = adjustment.path.match(/^\/fighters\/(\d+)\/quantity$/))) {
         const index = Number(match[1]), quantity = Number(adjustment.to);
-        if (next.fighters[index] && next.fighters[index].quantity !== quantity) {
-          next = { ...next, fighters: next.fighters.map((f, i) => i === index ? { ...f, quantity } : f) }; count++;
+        if (nf.fighters[index] && nf.fighters[index].quantity !== quantity) {
+          nf = { ...nf, fighters: nf.fighters.map((f, i) => i === index ? { ...f, quantity } : f) }; count++;
         }
       } else if (adjustment.code === 'FIGHTER_QUANTITY_CLAMPED' && (match = adjustment.path.match(/^\/projected\/(\d+)\/fighter\/quantity$/))) {
         const index = Number(match[1]), quantity = Number(adjustment.to);
-        if (next.projected[index]?.kind === 'fighter' && next.projected[index].quantity !== quantity) {
-          next = { ...next, projected: next.projected.map((p, i) => i === index ? { ...p, quantity } : p) }; count++;
+        if (nf.projected[index]?.kind === 'fighter' && nf.projected[index].quantity !== quantity) {
+          nf = { ...nf, projected: nf.projected.map((p, i) => i === index && p.kind === 'fighter' ? { ...p, quantity } : p) }; count++;
         }
       } else if (adjustment.code === 'SLOT_OCCUPIED_SKIPPED' && (match = adjustment.path.match(/^\/implants\/(\d+)$/))) {
         implants.add(Number(match[1]));
@@ -355,23 +376,23 @@ export default function App() {
         boosters.add(Number(match[1]));
       } else if (adjustment.code === 'MODE_DEFAULTED' && adjustment.path === '/ship/mode_type_id') {
         const mode = adjustment.to == null ? null : Number(adjustment.to);
-        if (next.mode_type_id !== mode) { next = { ...next, mode_type_id: mode }; count++; }
+        if (nf.ship.mode_type_id !== mode) { nf = { ...nf, ship: { ...nf.ship, mode_type_id: mode } }; count++; }
       } else if (adjustment.code === 'SECURITY_DEFAULTED' && adjustment.path === '/environment/system_security') {
-        if (next.system_security !== null) { next = { ...next, system_security: null }; count++; }
+        if (nf.environment.system_security !== null) { nf = { ...nf, environment: { ...nf.environment, system_security: null } }; count++; }
       }
     }
     if (implants.size) {
-      const remaining = next.implants.filter((_, i) => !implants.has(i));
-      count += next.implants.length - remaining.length;
-      next = { ...next, implants: remaining };
+      const remaining = nf.implants.filter((_, i) => !implants.has(i));
+      count += nf.implants.length - remaining.length;
+      nf = { ...nf, implants: remaining };
     }
     if (boosters.size) {
-      const remaining = next.boosters.filter((_, i) => !boosters.has(i));
-      count += next.boosters.length - remaining.length;
-      next = { ...next, boosters: remaining };
+      const remaining = nf.boosters.filter((_, i) => !boosters.has(i));
+      count += nf.boosters.length - remaining.length;
+      nf = { ...nf, boosters: remaining };
     }
     if (!count) return;
-    setFit(next);
+    setFit({ ...fit, fit: nf });
     const text = count === 1
       ? t('Applied one correction to the fit')
       : t('Applied {n} corrections to the fit').replace('{n}', String(count));
@@ -439,7 +460,7 @@ export default function App() {
           {!ds ? <div className="skeleton-list"><i /><i /><i /><i /><i /><i /><i /></div> : <>
           {left === 'market' && <Market ds={ds} engine={engineReady ? engineRef.current : null} onPick={pick} onPreview={previewPick} onInfo={setInfo} locate={locate} candidateId={candidateId} />}
           {left === 'fits' && <FitBrowser ds={ds} lib={lib} activeId={fit?.id ?? null} status={storeStatus}
-            onOpen={(id) => update((s) => ({ ...s, settings: { ...s.settings, activeFitId: id } }))} onLib={setLib} onInfo={locateType} />}
+            onOpen={(id) => update((s) => ({ ...s, settings: { ...s.settings, activeFitId: id } }))} onLib={setLib} onInfo={locateType} onSaveDoc={setFit} />}
           {left === 'char' && <CharacterEditor ds={ds} lib={lib} fit={fit} onLib={setLib} onFit={setFit} />}
           {left === 'profiles' && <Profiles lib={lib} fit={fit} onLib={setLib} onFit={setFit} />}
           </>}
@@ -453,8 +474,8 @@ export default function App() {
             {!settings.infoCollapsed && (infoState != null && ds ? (
               <div className="info-pane-content">
                 <ItemInfo ds={ds} id={infoState.id} ctx={infoState.ctx} fitted={fitted} fittedNote={fittedNote} onClose={() => setInfo(null)} onShow={setInfo} onSwap={fit ? swapInfoType : undefined}
-                  overrides={fit ? Object.fromEntries((fit.overrides ?? []).filter((o) => o.type_id === infoState.id).map((o) => [o.attribute_id, o.value])) : undefined}
-                  onOverride={fit ? (a, v) => setFit({ ...fit, overrides: [...(fit.overrides ?? []).filter((o) => !(o.type_id === infoState.id && o.attribute_id === a)), ...(v == null ? [] : [{ type_id: infoState.id, attribute_id: a, value: v }])] }) : undefined} />
+                  overrides={fit ? Object.fromEntries((fit.fit.overrides ?? []).filter((o) => o.type_id === infoState.id).map((o) => [o.attribute_id, o.value])) : undefined}
+                  onOverride={fit ? (a, v) => setFit(patchFit(fit, { overrides: [...(fit.fit.overrides ?? []).filter((o) => !(o.type_id === infoState.id && o.attribute_id === a)), ...(v == null ? [] : [{ type_id: infoState.id, attribute_id: a, value: v }])] })) : undefined} />
               </div>
             ) : <div className="info-empty muted">{t('Select an item to see details.')}</div>)}
           </section>
@@ -463,7 +484,7 @@ export default function App() {
           <div className="fit-area">
             {!ds ? <div className="skeleton-fit"><i /><i /><i /><i /><i /><i /><i /><i /></div>
               : fit ? <Fitting ds={ds} fit={fit} lib={lib} stats={stats} onChange={setFit} onInfo={locateType} addProjected={addProjected} setAddProjected={setAddProjected}
-                selection={sel} onSelect={(id, selection, ctx) => selectFitted(id, selection, ctx)} onOpenVariations={(id, selection, ctx) => openVariations(id, selection, ctx)} />
+                selection={sel} onSelect={(id, selection, ctx) => selectFitted(id, selection, ctx)} onOpenVariations={(id, selection, ctx) => openVariations(id, selection, ctx)} onOpenAlternatives={(id, selection, ctx) => openAlternatives(id, selection, ctx)} />
                 : <p className="muted">{t('No fit selected.')}</p>}
           </div>
           <div className="dock-resize" onPointerDown={(e) => beginResize(e, 'dock')} onDoubleClick={() => updateSettings({ dockCollapsed: !settings.dockCollapsed })} title={t('Drag to resize dock')} />
@@ -491,14 +512,15 @@ export default function App() {
                     setFit({ ...next, id: fit.id }, true);
                     notify({ kind: 'ok', text: `${t('Applied')} ${label} · ${t('Ctrl+Z to undo')}`,
                       action: { label: t('Undo'), onClick: () => undoRedo('undo') } });
-                  }} />
+                  }}
+                  onAddAlternative={addAlternativeOption} />
                   : dockTab === 'graphs' ? fit
-                    ? <Graphs st={stats} target={lib.targetProfiles[fit.target_profile_id]} engine={engineReady ? engineRef.current : null} request={request} engineReady={engineReady} lib={lib} fitId={fit.id} />
+                    ? <Graphs st={stats} target={lib.target_profiles[fit.refs.target_profile_id]} engine={engineReady ? engineRef.current : null} request={request} engineReady={engineReady} lib={lib} fitId={fit.id} />
                     : <p className="muted">{t('No fit selected.')}</p>
                     : dockTab === 'compare' ? <Compare ds={ds} lib={lib} activeId={fit?.id ?? null} engine={engineReady ? engineRef.current : null} onOpen={(id) => { update((s) => ({ ...s, settings: { ...s.settings, activeFitId: id } })); setDockTab('strip'); }} />
                       : dockTab === 'import-export' ? <ImportExport ds={ds} fit={fit} lib={lib} stats={stats}
                         calc={engineReady && engineRef.current ? (r) => engineRef.current!.calc(r) : null}
-                        onImport={(f) => addFit(f)} />
+                        onImport={(f) => addFit(f)} onLib={setLib} />
                         : <p className="muted">{t('No fit selected.')}</p>}
             </div>}
           </section>

@@ -1,7 +1,7 @@
 import type { FitStats } from '../engine/adapter';
 import { t as tr } from '../i18n';
 import type { Dataset } from '../data/dataset';
-import type { Fit } from '../fit/model';
+import type { FitDoc } from '../fit/model';
 import { Bar, Section, fmt, pctFmt } from './common';
 
 const DT = ['em', 'thermal', 'kinetic', 'explosive'] as const;
@@ -9,9 +9,9 @@ const DT_SHORT: Record<string, string> = { em: 'EM', thermal: 'Th', kinetic: 'Ki
 
 /** Localised weapon label: the engines report English type names; map type_id (or the fit module at module_index) to the
  *  dataset name in the current language, plus the loaded charge. Falls back to the engine string. */
-export function weaponName(w: any, ds?: Dataset | null, fit?: Fit | null): string {
+export function weaponName(w: any, ds?: Dataset | null, fit?: FitDoc | null): string {
   if (!ds) return w.name ?? '';
-  const m = fit && Number.isInteger(w.module_index) ? fit.modules[w.module_index] : undefined;
+  const m = fit && Number.isInteger(w.module_index) ? fit.fit.modules[w.module_index] : undefined;
   const tid = w.type_id ?? m?.type_id;
   const base = tid != null && ds.raw.types?.[tid] ? ds.name(tid) : (w.name ?? '');
   const ch = w.charge_type_id ?? m?.charge_type_id;
@@ -19,7 +19,7 @@ export function weaponName(w: any, ds?: Dataset | null, fit?: Fit | null): strin
 }
 
 export function Stats({ st, busy, ms, error, ds, fit, onWriteBack }: {
-  st: FitStats | null; busy: boolean; ms: number | null; error: string | null; ds?: Dataset | null; fit?: Fit | null; onWriteBack?: () => void;
+  st: FitStats | null; busy: boolean; ms: number | null; error: string | null; ds?: Dataset | null; fit?: FitDoc | null; onWriteBack?: () => void;
 }) {
   if (error) return <div className="stats"><div className="error">{tr('Engine error')}: {error}</div></div>;
   if (!st) return <div className="stats muted">{busy ? tr('calculating…') : tr('no stats yet')}</div>;
