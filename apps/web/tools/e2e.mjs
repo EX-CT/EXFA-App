@@ -326,7 +326,7 @@ await clickText('.left .tabs button', 'Fits');
 const fb = await p.evaluate(() => ({ groups: [...document.querySelectorAll('.fitbrowser summary')].map((x) => x.textContent), names: [...document.querySelectorAll('.fitbrowser li')].map((x) => x.textContent) }));
 check('web.e2e.multi-fit-eft-import: multi-fit EFT import + fit browser groups', fb.names.some((n) => n.includes('Multi A')) && fb.names.some((n) => n.includes('Multi B')) && fb.groups.some((g) => g.startsWith('Frigate')), fb.groups.join(', '));
 await p.type('.fitbrowser .search', 'Merlin');
-const fbn = await p.evaluate(() => document.querySelectorAll('.fitbrowser li').length);
+const fbn = await p.evaluate(() => document.querySelectorAll('.fitbrowser .lib-fit[data-fit-id]').length);
 check('web.e2e.fit-browser-search: fit browser search', fbn === 1, fbn);
 
 // Prices use the Engine price block; "update prices" injects the deployed latest
@@ -575,8 +575,8 @@ const zhAll = [...zhUi.tabs, ...zhUi.sections, ...zhUi.slots, ...zhIo];
 check('web.e2e.zh-ui: zh-CN UI (dock tabs, stats sections, slots, import/export controls) has no untranslated labels',
   zhUi.tabs.includes('对比栏') && zhUi.tabs.includes('配置对比') && zhUi.sections.length > 3 && zhIo.includes('导入') && latin(zhAll).length === 0,
   latin(zhAll).join(' | ') || `${zhAll.length} labels`);
-check('web.e2e.whatif-tab-removed: the four-tab dock uses the compare strip instead of What-if',
-  zhUi.dockTabs.length === 4 && zhUi.dockTabs.some((x) => x.startsWith('对比栏')) && !zhUi.dockTabs.some((x) => x.includes('假设分析')),
+check('web.e2e.whatif-tab-removed: the five-tab dock uses the compare strip and groups tab instead of What-if',
+  zhUi.dockTabs.length === 5 && zhUi.dockTabs.some((x) => x.startsWith('对比栏')) && zhUi.dockTabs.includes('配置组') && !zhUi.dockTabs.some((x) => x.includes('假设分析')),
   zhUi.dockTabs.join(' | '));
 // ---- fit library (IndexedDB): Pyfa saved-fits database import, folders / tags, rename, duplicate, delete, exports,
 // backup / restore, persistence across reloads, DNA import, migration of the localStorage library ----
@@ -721,7 +721,8 @@ try {
   await p.click('.export-exfa');
   const docFile = await waitFile('.exfa.json');
   const docJson = docFile ? JSON.parse(fs.readFileSync(path.join(dlDir, docFile), 'utf8')) : null;
-  check('web.e2e.exfa-export: current fit exports as an exfa/fit@1 .exfa.json document', docJson?.format === 'exfa/fit@1' && !!docJson?.id && !!docJson?.fit?.ship?.type_id, docFile ?? 'no file');
+  const pkgFit = docJson?.library?.fits?.[docJson?.root?.id ?? ''];
+  check('web.e2e.exfa-export: current fit exports as an exfa/package@1 .exfa.json document with dependency closure', docJson?.format === 'exfa/package@1' && docJson?.root?.kind === 'fit' && !!pkgFit?.fit?.ship?.type_id, docFile ?? 'no file');
   await p.click('.export-zip');
   const zipFile = await waitFile('.zip');
   const zipBytes = zipFile ? fs.readFileSync(path.join(dlDir, zipFile)) : null;
