@@ -1,16 +1,12 @@
-// Demo workspace seeding (docs/27 §5): uses the real public dataset because the mini fixture
-// lacks the demo hulls/modules.
+// Demo workspace seeding (docs/27 §5). The mini fixture carries the demo hulls/modules.
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { gunzipSync } from 'node:zlib';
-import { fileURLToPath } from 'node:url';
 import { compileGroup } from '@exfa/format';
-import { Dataset } from './dataset';
 import { DEMO_WS, seedDemoWorkspace } from './demo';
 import { emptyLibrary, newFit, type Library } from '../fit/model';
 import { docWs, entityWs, workspacesOf, DEFAULT_WS } from '../fit/library';
+import { id, miniDataset } from '../test/fixture';
 
-const ds = new Dataset(JSON.parse(gunzipSync(readFileSync(fileURLToPath(new URL('../../public/data/dataset.json.gz', import.meta.url)))).toString()));
+const ds = miniDataset();
 const seeded = () => seedDemoWorkspace(ds, emptyLibrary());
 type BatchEntry = { id: string; label?: string; fit: { projected?: { kind: string; select?: { module_ids?: string[] }; distance_m?: number | null }[]; fleet?: { booster_fits?: unknown[] } } };
 const batchOf = (lib: Library, groupId: string): BatchEntry[] => {
@@ -67,7 +63,7 @@ describe('data/demo', () => {
   });
 
   it('web.unit.demo-isolation: user data in other workspaces is untouched', () => {
-    const user = { ...newFit(587, 'My Rifter'), id: 'user-fit' };
+    const user = { ...newFit(id('Rifter'), 'My Rifter'), id: 'user-fit' };
     const lib0 = { ...emptyLibrary(), fits: { 'user-fit': user } };
     const { lib } = seedDemoWorkspace(ds, lib0);
     expect(lib.fits['user-fit']).toEqual(user);

@@ -18,6 +18,8 @@ const NAMES = [
   'Nanite Repair Paste', '5MN Microwarpdrive II', 'Small Ancillary Armor Repairer', 'Burst Jammer II', 'Gunnery', 'Small Projectile Turret',
   // Pyfa saved-fits database fixture (src/test/fixtures/pyfa-saveddata.db)
   'Svipul Defense Mode', 'Warrior II', 'Drones', 'Drone Navigation', "Zainou 'Snapshot' Heavy Missiles HM-703",
+  // demo workspace seed (src/data/demo.ts)
+  'Guardian', 'Exequror', 'Cyclone', 'Medium Remote Armor Repairer II', 'Armor Command Burst II', 'Skirmish Command Burst II', 'Capacitor Power Relay II',
 ];
 const byName = new Map(Object.entries(d.types).map(([k, t]) => [t.name, k]));
 const keep = new Set();
