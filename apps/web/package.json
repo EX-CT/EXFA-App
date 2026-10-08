@@ -13,7 +13,7 @@
     "test:unit": "vitest run"
   },
   "dependencies": {
-    "@exfa/format": "github:EX-CT/EXFA-Format#v1.0.0",
+    "@exfa/format": "github:EX-CT/EXFA-Format#v1.1.0",
     "fflate": "^0.8.2",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",

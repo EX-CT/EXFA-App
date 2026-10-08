@@ -91,7 +91,7 @@ describe('fit/model applyMarketPick', () => {
   it('web.unit.market-charge-cargo: a charge with no compatible modules is added to cargo', () => {
     const fit = rifter();
     const next = applyMarketPick(ds, fit, null, id('Void M'), 'smart');
-    expect(next.fit.fit.cargo).toEqual([{ type_id: id('Void M'), quantity: 1 }]);
+    expect(next.fit.fit.cargo).toEqual([{ id: expect.any(String), type_id: id('Void M'), quantity: 1 }]);
     expect(next.note).toEqual({ kind: 'added', typeId: id('Void M') });
   });
 

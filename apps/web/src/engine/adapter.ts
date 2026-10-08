@@ -1,5 +1,7 @@
 // Engine adapter: the UI talks to a stateless calc function hosted in one Web Worker.
 
+import type { ComputeRequest } from '@exfa/format';
+
 export type FitStats = Record<string, any>;
 
 export interface EngineInfo { id: string; label: string; detail?: string }
@@ -38,7 +40,7 @@ class WorkerEngine implements Engine {
   private w: Worker | null = null;
   private seq = 0;
   private pending = new Map<number, { ok: (v: any) => void; err: (e: Error) => void }>();
-  readonly info: EngineInfo = { id: 'wasm-worker', label: 'EXFA Engine v0.2.0 · WebAssembly worker' };
+  readonly info: EngineInfo = { id: 'wasm-worker', label: 'EXFA Engine v0.2.2 · WebAssembly worker' };
   private readonly initMsg: Record<string, unknown>;
   constructor(initMsg: Record<string, unknown>) { this.initMsg = initMsg; }
 
@@ -96,4 +98,41 @@ export async function enginePricesLoad(e: Engine, snapshot: unknown | null): Pro
   const err = rpcError(r);
   if (err) { if (err.code === 'UNKNOWN_METHOD') return false; throw new Error(`${err.code}: ${err.message}`); }
   return true;
+}
+
+// ---- docs/27 §5 unified compute media (exfa/compute@1 → exfa/compute-result@1) ----
+
+/** Batch result as both `compute` (operation=batch) and the docs/23 `batch` RPC return it. */
+export interface EngineBatchResult {
+  results?: { index: number; id?: string; label?: string; stats?: FitStats; error?: { code: string; message: string } }[];
+  [k: string]: unknown;
+}
+
+/** Engines that answered `compute` once (per Engine instance / session). */
+const computeCapable = new WeakMap<Engine, boolean>();
+
+/** One `exfa/compute@1` request (operation calc|batch). New engines take the `compute` RPC; on an engine without it
+ *  (bundled WASM predating it, UNKNOWN_METHOD) the same payload goes through `calc` / the docs/23 `batch` RPC. */
+export async function engineCompute(e: Engine, request: ComputeRequest): Promise<FitStats | EngineBatchResult> {
+  if (e.rpcRaw && computeCapable.get(e) !== false) {
+    const r = await e.rpcRaw('compute', request).catch(() => null);
+    if (r && !r.error) {
+      const env = r.result as { format?: string; operation?: string; result?: unknown; error?: { code: string; message?: string } } | undefined;
+      if (env && env.operation === request.operation) {
+        computeCapable.set(e, true);
+        if ('result' in env) return env.result as FitStats | EngineBatchResult;
+        const ce = env.error;
+        if (!ce) computeCapable.set(e, false); // malformed envelope → legacy path
+        else if (ce.code === 'UNKNOWN_METHOD') computeCapable.set(e, false);
+        else throw new Error(`${ce.code}: ${ce.message ?? 'compute failed'}`);
+      } else computeCapable.set(e, false); // answered but not a compute-result envelope
+    } else if (r?.error?.code === 'UNKNOWN_METHOD') computeCapable.set(e, false);
+    else if (r?.error) throw new Error(`${r.error.code}: ${r.error.message}`);
+    else computeCapable.set(e, false); // no RPC transport at all
+  }
+  // fallback: the legacy entry points take the same payload
+  if (request.operation === 'calc') return e.calc(request.fit);
+  const b = await engineBatch(e, request.batch as Record<string, unknown>);
+  if (!b) throw new Error('this engine has neither `compute` nor `batch`');
+  return b;
 }

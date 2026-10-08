@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { BUILTIN_CHARACTERS, BUILTIN_DAMAGE, BUILTIN_TARGETS } from '../data/presets';
 import { emptyLibrary, newFit, patchFit, requestFor, type Library } from './model';
+import { id, miniDataset } from '../test/fixture';
+import { addItemToFit } from './model';
+import { ensureItemIds } from './library';
 
 const lib = (): Library => ({
   ...emptyLibrary(),
@@ -66,6 +69,40 @@ describe('fit/model moveModule', () => {
     expect(mods(moveModule(fit(), 0, null))).toEqual(['mid:2', 'high:3', 'high:4', 'high:1', 'low:5']);
     expect(mods(moveModule(fit(), 0, 1))).toEqual(mods(fit())); // another rack: no change
     expect(moveModule(fit(), 2, 2).fit.modules).toHaveLength(5);
+  });
+});
+
+describe('fit/model equipment ids (docs/27 §7.3)', () => {
+  const ds = miniDataset();
+  it('web.unit.item-ids-created: addItemToFit mints an id on every module/drone/fighter/cargo entry', () => {
+    let f = newFit(id('Rifter'), 'R');
+    f = addItemToFit(ds, f, id('200mm AutoCannon II'))!;
+    f = addItemToFit(ds, f, id('Hobgoblin II'))!;
+    f = addItemToFit(ds, f, id('Firbolg II'))!;
+    f = addItemToFit(ds, f, id('Fusion S'))!; // a charge: loaded into the gun
+    f = addItemToFit(ds, f, id('Void M'))!;   // incompatible charge -> cargo
+    expect(f.fit.modules.every((m) => typeof m.id === 'string' && m.id.length > 0)).toBe(true);
+    expect(f.fit.drones[0]).toMatchObject({ id: expect.any(String), type_id: id('Hobgoblin II') });
+    expect(f.fit.fighters[0]).toMatchObject({ id: expect.any(String), type_id: id('Firbolg II') });
+    expect(f.fit.cargo[0]).toMatchObject({ id: expect.any(String), type_id: id('Void M'), quantity: 1 });
+    // ids are unique across the document
+    const ids = [...f.fit.modules, ...f.fit.drones, ...f.fit.fighters, ...f.fit.cargo].map((x) => x.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+  it('web.unit.item-ids-ensure: ensureItemIds fills missing ids on every list and never rewrites existing ones', () => {
+    const bare = patchFit(newFit(id('Rifter'), 'R'), {
+      modules: [{ type_id: 2873, slot: 'high', state: 'active', charge_type_id: null }],
+      drones: [{ id: 'keep-me', type_id: 2456, quantity: 5, active: 5 }, { type_id: 2456, quantity: 2, active: 0 }],
+      fighters: [{ type_id: 66190, quantity: 3, active: true }],
+      cargo: [{ type_id: 21896, quantity: 40 }],
+    });
+    const fixed = ensureItemIds(bare);
+    expect(fixed).not.toBe(bare);
+    expect(fixed.fit.drones[0].id).toBe('keep-me');
+    for (const list of [fixed.fit.modules, fixed.fit.drones, fixed.fit.fighters, fixed.fit.cargo])
+      expect(list.every((x) => typeof x.id === 'string' && x.id.length > 0)).toBe(true);
+    // already-complete documents are returned unchanged (identity)
+    expect(ensureItemIds(fixed)).toBe(fixed);
   });
 });
 

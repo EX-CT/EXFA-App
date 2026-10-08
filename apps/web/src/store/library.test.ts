@@ -14,7 +14,7 @@ class MemStorage implements Storage {
   setItem(k: string, v: string) { this.m.set(k, String(v)); }
 }
 const fit = (id: string, name = id): FitDoc => ({ ...newFit(587, name), id });
-const index = (p: Partial<LibraryIndex> = {}): LibraryIndex => ({ characters: {}, damage_patterns: {}, target_profiles: {}, scenarios: {}, fleets: {}, folders: [], ...p });
+const index = (p: Partial<LibraryIndex> = {}): LibraryIndex => ({ characters: {}, damage_patterns: {}, target_profiles: {}, scenarios: {}, fleets: {}, groups: {}, folders: [], ...p });
 const lib = (fits: Record<string, FitDoc>, p: Partial<LibraryIndex> = {}) =>
   ({ ...emptyLibrary(), fits, characters: Object.fromEntries(BUILTIN_CHARACTERS.map((c) => [c.id, c])), ...p });
 
@@ -63,6 +63,23 @@ describe('store/library (IndexedDB v2)', () => {
     const again = await indexedDbBackend(idb, 't2');
     expect((await again.load())!.fits.old.fit.ship.type_id).toBe(587);
     db.close();
+  });
+  it('web.unit.store-index-groups-ws: groups, workspace registry and entity ws tags persist through the index (docs/27)', async () => {
+    const idb = new IDBFactory();
+    const a = await indexedDbBackend(idb, 'tws');
+    const group = { format: 'exfa/group@1' as const, id: 'g1', name: 'pair', actors: [], relations: [] };
+    const idx = index({ groups: { g1: group }, workspaces: [{ id: 'default', name: 'Default' }, { id: 'ws2', name: 'roam' }], ws: { g1: 'ws2', fl1: 'ws2' } });
+    await a.write([fit('x')], [], idx);
+    const l = (await indexedDbBackend(idb, 'tws').then((b) => b.load()))!;
+    expect(l.groups.g1.name).toBe('pair');
+    expect(l.workspaces?.map((w) => w.id)).toEqual(['default', 'ws2']);
+    expect(l.ws).toEqual({ g1: 'ws2', fl1: 'ws2' });
+    // storedPart/diffLibrary carry the same fields so index writes fire on group/workspace changes
+    const s0 = storedPart(lib({ x: fit('x') }));
+    const s1 = storedPart({ ...lib({ x: fit('x') }), groups: { g1: group } });
+    expect(diffLibrary(s0, s1).index?.groups.g1.id).toBe('g1');
+    const s2 = storedPart({ ...lib({ x: fit('x') }), workspaces: [{ id: 'w9', name: 'n' }], ws: { e: 'w9' } });
+    expect(diffLibrary(s0, s2).index?.ws).toEqual({ e: 'w9' });
   });
   it('web.unit.store-diff: only changed documents are written, removed ones deleted, built-ins never stored', () => {
     const f1 = fit('a'), f2 = fit('b');

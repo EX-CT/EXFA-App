@@ -4,17 +4,18 @@
 // Every import goes through the formats layer; JSON documents/libraries go through @exfa/format migrate.
 import { useMemo, useRef, useState } from 'react';
 import { t } from '../i18n';
-import { applyBranch, branchDiverged, migrateFitDocument, restoreHistory } from '@exfa/format';
+import { applyBranch, branchDiverged, migrateFitDocument, packageGroup, restoreHistory } from '@exfa/format';
 import type { Dataset } from '../data/dataset';
-import { uid, type FitDoc, type Fleet, type Library } from '../fit/model';
+import { uid, type FitDoc, type Fleet, type Group, type Library } from '../fit/model';
 import {
-  allFolders, allTags, deleteFleet, deleteFits, deleteFolder, duplicateFit, fleetsOf, joinFleet, leaveFleets, makeBackup,
-  mergeLibrary, moveFleet, moveFits, normFolder, parseBackup, parseTags, renameFit, renameFolder, searchFits, setFleetRole,
-  tagFits, updateFits,
+  DEFAULT_WS, deleteFleet, deleteFits, deleteFolder, duplicateFit, entityWs, filterWorkspace, fleetsOf, importPackage,
+  joinFleet, leaveFleets, makeBackup, mergeLibrary, moveFleet, moveFits, newGroupDoc, normFolder, normTags, packageToFile,
+  parseBackup, parseTags, removeGroup, removeWorkspace, renameFit, renameFolder, searchFits, setDocWs, setEntityWs,
+  setFleetRole, tagFits, updateFits, upsertGroup, upsertWorkspace, workspacesOf, wsCounts, wsFolders, wsRegister, wsTags,
 } from '../fit/library';
 import { exportFits, importFits, libraryFromStructured } from '../formats';
 import { importPyfaDb, isSqlite } from '../formats/pyfadb';
-import { filesToLibrary, isZip, unzipFiles } from '../formats/zipfiles';
+import { filesToLibrary, isZip, splitPackages, unzipFiles } from '../formats/zipfiles';
 import { saveUserImplantSets, userImplantSets } from '../data/sdePresets';
 import type { StoreStatus } from '../store';
 import { FloatMenu, InlineEdit, Popover, TypeIcon } from './common';
@@ -56,8 +57,10 @@ function buildTree(lib: Library): TNode {
 }
 const countIn = (n: TNode): number => n.fits.length + n.children.reduce((s, c) => s + countIn(c), 0);
 
-export function FitBrowser({ ds, lib, activeId, status, onOpen, onLib, onInfo, onSaveDoc }: {
+export function FitBrowser({ ds, lib, activeId, status, wsId, onWs, onOpenGroup, onOpen, onLib, onInfo, onSaveDoc }: {
   ds: Dataset; lib: Library; activeId: string | null; status: StoreStatus;
+  /** Active workspace id (docs/27 §5.4): the tree, search, groups and folder/tag pickers are scoped to it. */
+  wsId: string; onWs: (id: string) => void; onOpenGroup: (id: string) => void;
   onOpen: (id: string | null) => void; onLib: (l: Library) => void; onInfo?: (id: number) => void;
   /** Saves a changed document through the app's history-recording path (App setFit); falls back to onLib. */
   onSaveDoc?: (doc: FitDoc) => void;
@@ -66,9 +69,17 @@ export function FitBrowser({ ds, lib, activeId, status, onOpen, onLib, onInfo, o
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
   const libRef = useRef(lib); libRef.current = lib;
-  const folders = useMemo(() => allFolders(lib), [lib]);
-  const tags = useMemo(() => allTags(lib), [lib]);
-  const tree = useMemo(() => buildTree(lib), [lib]);
+  const view = useMemo(() => filterWorkspace(lib, wsId), [lib, wsId]);
+  const folders = useMemo(() => wsFolders(lib, wsId), [lib, wsId]);
+  const tags = useMemo(() => wsTags(lib, wsId), [lib, wsId]);
+  const tree = useMemo(() => buildTree(view), [view]);
+  const cfgGroups = useMemo(() => Object.values(lib.groups ?? {}).filter((g) => entityWs(lib, g.id) === wsId)
+    .sort((a, b) => a.name.localeCompare(b.name)), [lib, wsId]);
+  const wsList = useMemo(() => workspacesOf(lib), [lib]);
+  const counts = useMemo(() => wsCounts(lib), [lib]);
+  const [wsMenu, setWsMenu] = useState(false);
+  const [wsNew, setWsNew] = useState('');
+  const [groupmenu, setGroupmenu] = useState<{ x: number; y: number; g: Group } | null>(null);
   const [mode, setMode] = useState<'folder' | 'ship'>(() => (folders.length ? 'folder' : 'ship'));
   const [tag, setTag] = useState('');
   const [sel, setSel] = useState<string[]>([]);
@@ -83,7 +94,7 @@ export function FitBrowser({ ds, lib, activeId, status, onOpen, onLib, onInfo, o
   const [fleetmenu, setFleetmenu] = useState<{ x: number; y: number; fleet: Fleet } | null>(null);
   const [membermenu, setMembermenu] = useState<{ x: number; y: number; fleet: Fleet; fitId: string } | null>(null);
   const [fleetRename, setFleetRename] = useState<string | null>(null);
-  const fits = searchFits(ds, lib, q).filter((f) => !tag || (f.tags ?? []).includes(tag));
+  const fits = searchFits(ds, view, q).filter((f) => !tag || (f.tags ?? []).includes(tag));
   const filtering = !!(q || tag);
   const selected = sel.filter((id) => lib.fits[id]);
   const selFits = selected.map((id) => lib.fits[id]);
@@ -123,10 +134,20 @@ export function FitBrowser({ ds, lib, activeId, status, onOpen, onLib, onInfo, o
       if (activeWasRemoved && activeId) onOpen(activeId);
     } } });
   };
+  /** `p` equals `f` or sits under it. */
+  const underP = (p: string, f: string) => !!p && (p === f || p.startsWith(f + '/'));
+  /** Applies `map` to the active workspace's own folder list (kept in sync with renames/deletes). */
+  const wsFolderMap = (l: Library, map: (p: string) => string) => {
+    const meta = workspacesOf(l).find((w) => w.id === wsId);
+    return meta?.folders?.length ? upsertWorkspace(l, { ...meta, folders: normTags(meta.folders.map(map).filter(Boolean)) }) : l;
+  };
+  const renameFolderWs = (from: string, to: string) =>
+    wsFolderMap(renameFolder(lib, from, to), (p) => (underP(p, normFolder(from)) ? normFolder(normFolder(to) + p.slice(normFolder(from).length)) : p));
   const removeFolder = (key: string) => {
     const moved = Object.values(lib.fits).filter((f) => normFolder(f.folder) === key || normFolder(f.folder).startsWith(`${key}/`));
     const previousFolders = lib.folders ?? [];
-    apply(deleteFolder(lib, key));
+    const parent = key.includes('/') ? key.slice(0, key.lastIndexOf('/')) : '';
+    apply(wsFolderMap(deleteFolder(lib, key), (p) => (underP(p, key) ? normFolder(parent + p.slice(key.length)) : p)));
     const text = t('Deleted folder “{name}”').replace('{name}', () => key);
     notify({ kind: 'ok', text, action: { label: t('Undo'), onClick: () => {
       const current = libRef.current;
@@ -139,13 +160,13 @@ export function FitBrowser({ ds, lib, activeId, status, onOpen, onLib, onInfo, o
     if (!popover) return;
     const value = popover.value.trim();
     if (popover.kind === 'tags') {
-      if (value) apply(tagFits(lib, selected, parseTags(value)));
+      if (value) apply(wsRegister(tagFits(lib, selected, parseTags(value)), wsId, { tags: parseTags(value) }));
     } else {
       const folder = normFolder(value);
       if (folder) {
         let next = moveFits(lib, selected, folder);
         next = { ...next, folders: [...new Set([...(next.folders ?? []), folder])] };
-        apply(next);
+        apply(wsRegister(next, wsId, { folders: [folder] }));
       }
     }
     setPopover(null);
@@ -153,17 +174,32 @@ export function FitBrowser({ ds, lib, activeId, status, onOpen, onLib, onInfo, o
   /** Create `folders` entry `path` (after an inline tree edit) and switch to folder mode. */
   const addFolder = (path: string) => {
     const p = normFolder(path);
-    if (p) apply({ ...lib, folders: [...new Set([...(lib.folders ?? []), p])] });
+    if (p) apply(wsRegister({ ...lib, folders: [...new Set([...(lib.folders ?? []), p])] }, wsId, { folders: [p] }));
     setPopover(null);
   };
   /** New fleet around `f` created at the fit's folder; lands in rename mode (Pyfa-style create-then-name). */
   const newFleetFor = (f: FitDoc) => {
     const { lib: next, fleetId } = joinFleet(lib, null, f.id, t('New fleet'));
-    apply({ ...next, fleets: { ...next.fleets, [fleetId]: { ...next.fleets[fleetId], folder: normFolder(f.folder) } } });
+    apply(setEntityWs({ ...next, fleets: { ...next.fleets, [fleetId]: { ...next.fleets[fleetId], folder: normFolder(f.folder) } } }, fleetId, wsId));
     setFleetRename(fleetId);
     setMode('folder');
   };
-  const duplicate = (f: FitDoc) => { const c = duplicateFit(f, `${f.name} ${t('(copy)')}`); apply({ ...lib, fits: { ...lib.fits, [c.id]: c } }); onOpen(c.id); };
+  /** New group in the active workspace, opened in the Groups dock tab. */
+  const newGroup = () => {
+    const g = newGroupDoc(t('New configuration group'));
+    apply(setEntityWs(upsertGroup(lib, g), g.id, wsId));
+    onOpenGroup(g.id);
+  };
+  const exportGroup = (g: Group) => {
+    const file = packageToFile(packageGroup(lib, g), g.name || 'group');
+    download(file.path.slice(file.path.lastIndexOf('/') + 1), file.text, 'application/json');
+    setMsg(`${t('exported')}: ${g.name} (exfa/package@1)`);
+  };
+  const removeGroupWs = (g: Group) => {
+    if (!window.confirm(t('Delete this configuration group?'))) return;
+    apply(removeGroup(lib, g.id));
+  };
+  const duplicate = (f: FitDoc) => { const c = setDocWs(duplicateFit(f, `${f.name} ${t('(copy)')}`), wsId); apply({ ...lib, fits: { ...lib.fits, [c.id]: c } }); onOpen(c.id); };
   const saveEdit = () => {
     if (!edit) return;
     let l = renameFit(lib, edit.id, edit.name);
@@ -219,9 +255,11 @@ export function FitBrowser({ ds, lib, activeId, status, onOpen, onLib, onInfo, o
       try {
         const bytes = new Uint8Array(await file.arrayBuffer());
         if (isZip(bytes)) {
-          const m = mergeLibrary(l, filesToLibrary(unzipFiles(bytes)));
+          const { packages, files: ff } = splitPackages(unzipFiles(bytes));
+          const m = mergeLibrary(l, filesToLibrary(ff), wsId);
           l = m.lib; total += m.added.length + m.updated.length; first ??= m.added[0] ?? m.updated[0] ?? null;
-          notes.push(`${file.name}: zip, ${m.added.length} ${t('added')}, ${m.updated.length} ${t('updated')}, ${m.skipped.length} ${t('skipped')}`);
+          for (const p of packages) { const r = importPackage(l, p, wsId); l = r.lib; }
+          notes.push(`${file.name}: zip, ${m.added.length} ${t('added')}, ${m.updated.length} ${t('updated')}, ${m.skipped.length} ${t('skipped')}${packages.length ? `, ${packages.length} ${t('package(s)')}` : ''}`);
           continue;
         }
         if (isSqlite(bytes)) {
@@ -231,7 +269,7 @@ export function FitBrowser({ ds, lib, activeId, status, onOpen, onLib, onInfo, o
             fits: Object.fromEntries(r.fits.map((f) => [f.id, f])), characters: Object.fromEntries(r.characters.map((c) => [c.id, c])),
             damage_patterns: Object.fromEntries(r.damagePatterns.map((d) => [d.id, d])), target_profiles: Object.fromEntries(r.targetProfiles.map((x) => [x.id, x])),
             folders: [PYFA_FOLDER],
-          });
+          }, wsId);
           l = m.lib; total += m.added.length + m.updated.length; first ??= m.added[0] ?? m.updated[0] ?? null;
           if (r.implantSets.length) {
             const have = userImplantSets();
@@ -245,10 +283,16 @@ export function FitBrowser({ ds, lib, activeId, status, onOpen, onLib, onInfo, o
           continue;
         }
         const text = new TextDecoder().decode(bytes);
-        if (/^\s*\{/.test(text) && (text.includes('eve-fit-web-library') || text.includes('exfa/library@1') || text.includes('exfa/fit@1'))) {
+        if (/^\s*\{/.test(text) && (text.includes('eve-fit-web-library') || text.includes('exfa/library@1') || text.includes('exfa/fit@1') || text.includes('exfa/package@1'))) {
           const j = JSON.parse(text);
+          if (j?.format === 'exfa/package@1') {
+            const r = importPackage(l, j, wsId);
+            l = r.lib; total += Object.keys(j.library?.fits ?? {}).length;
+            notes.push(`${file.name}: ${t('package')}${r.issues.length ? `; ${t('warnings')}: ${r.issues.join('; ')}` : ''}`);
+            continue;
+          }
           const doc = j?.format === 'exfa/fit@1' ? migrateFitDocument(j, uid()) : null;
-          const m = doc ? mergeLibrary(l, { fits: { [doc.id]: doc } }) : mergeLibrary(l, parseBackup(text).lib);
+          const m = doc ? mergeLibrary(l, { fits: { [doc.id]: doc } }, wsId) : mergeLibrary(l, parseBackup(text).lib, wsId);
           l = m.lib; total += m.added.length + m.updated.length; first ??= m.added[0] ?? m.updated[0] ?? null;
           notes.push(`${file.name}: ${t('backup')}, ${m.added.length} ${t('added')}, ${m.updated.length} ${t('updated')}, ${m.skipped.length} ${t('skipped')}`);
           continue;
@@ -256,7 +300,7 @@ export function FitBrowser({ ds, lib, activeId, status, onOpen, onLib, onInfo, o
       const r = await importFits(ds, text, 'auto', file.name);
         const now = new Date().toISOString();
         const fs = r.fits.map((f) => ({ ...f, folder: normFolder(target), created: now, modified: now }));
-        const m = mergeLibrary(l, { fits: Object.fromEntries(fs.map((f) => [f.id, f])), folders: target ? [normFolder(target)] : [] });
+        const m = mergeLibrary(l, { fits: Object.fromEntries(fs.map((f) => [f.id, f])), folders: target ? [normFolder(target)] : [] }, wsId);
         l = m.lib; total += m.added.length; first ??= m.added[0] ?? null;
         notes.push(`${file.name}: ${r.kind}, ${m.added.length} ${t('fit(s)')}${r.warnings.length ? `; ${t('warnings')}: ${r.warnings.join('; ')}` : ''}`);
       } catch (e) { notes.push(`${file.name}: ${(e as Error).message}`); }
@@ -352,7 +396,7 @@ export function FitBrowser({ ds, lib, activeId, status, onOpen, onLib, onInfo, o
         onDoubleClick={(e) => { if ((e.target as HTMLElement).closest('button, input')) return; if (node.path) setFolderRename(node.path); }}>
         {folderRename === node.path
           ? <span className="folder-inline" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
-              <InlineEdit autoEdit value={node.path} placeholder={t('Rename folder')} onCommit={(to) => { apply(renameFolder(lib, node.path, to)); setFolderRename(null); }} />
+              <InlineEdit autoEdit value={node.path} placeholder={t('Rename folder')} onCommit={(to) => { apply(renameFolderWs(node.path, to)); setFolderRename(null); }} />
             </span>
           : (node.path ? node.name : t('(no folder)'))} <span className="muted">({countIn(node)})</span>
         {node.path ? <span className="right">
@@ -438,9 +482,52 @@ export function FitBrowser({ ds, lib, activeId, status, onOpen, onLib, onInfo, o
           }}>{t('移出编队')}</button>
         </FloatMenu>
       )}
+      {groupmenu && (
+        <FloatMenu x={groupmenu.x} y={groupmenu.y} onClose={() => setGroupmenu(null)}>
+          <div className="ctxhead">{groupmenu.g.name}</div>
+          <button onClick={() => { onOpenGroup(groupmenu.g.id); setGroupmenu(null); }}>{t('Open')}</button>
+          <button onClick={() => { exportGroup(groupmenu.g); setGroupmenu(null); }}>{t('Export .exfa.json (package)')}</button>
+          <button className="danger" onClick={() => { removeGroupWs(groupmenu.g); setGroupmenu(null); }}>{t('Delete group')}</button>
+        </FloatMenu>
+      )}
       <div className="row lib-head">
+        <div className="popover-anchor">
+          <select className="lib-ws" value={wsId} onChange={(e) => onWs(e.target.value)} title={t('Workspace')}>
+            {wsList.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+          </select>
+          <button className="mini lib-ws-mgr" title={t('Manage workspaces')} onClick={() => setWsMenu((v) => !v)}>⚙</button>
+          <Popover open={wsMenu} onClose={() => setWsMenu(false)} className="library-popover">
+            <div className="ctxlabel">{t('Workspaces')}</div>
+            {wsList.map((w) => {
+              const n = counts[w.id] ?? 0;
+              const locked = w.id === wsId || w.id === DEFAULT_WS || n > 0;
+              return (
+                <div className="row" key={w.id} data-ws={w.id}>
+                  <InlineEdit value={w.name} placeholder={t('Workspace name')} onCommit={(v) => apply(upsertWorkspace(lib, { ...w, name: v || w.name }))} />
+                  <span className="muted">{n} {t('items')}</span>
+                  {w.id === wsId && <span className="tag">{t('current')}</span>}
+                  <button className="mini" disabled={locked}
+                    title={w.id === wsId ? t('Cannot delete the active workspace') : w.id === DEFAULT_WS ? t('Cannot delete the default workspace') : n > 0 ? t('Workspace is not empty') : t('Delete workspace')}
+                    onClick={() => { if (window.confirm(`${t('Delete workspace')} “${w.name}”?`)) { apply(removeWorkspace(lib, w.id)); } }}>✕</button>
+                </div>
+              );
+            })}
+            <form className="row" onSubmit={(e) => {
+              e.preventDefault();
+              const name = wsNew.trim();
+              if (!name) return;
+              const w = { id: uid(), name, created: new Date().toISOString() };
+              apply(upsertWorkspace(lib, w));
+              setWsNew(''); setWsMenu(false); onWs(w.id);
+            }}>
+              <input value={wsNew} placeholder={t('New workspace…')} onChange={(e) => setWsNew(e.target.value)} />
+              <button disabled={!wsNew.trim()}>{t('Create')}</button>
+            </form>
+            <p className="muted small">{t('Workspaces partition the library; fits and groups you create or import land in the active workspace.')}</p>
+          </Popover>
+        </div>
         <span className="lib-status muted small" data-kind={status.kind} data-fits={status.fits} data-saves={status.saves} title={status.note ?? status.error ?? ''}>
-          {Object.keys(lib.fits).length} {t('fit(s)')} · {t(STORE_LABEL[status.kind] ?? status.kind)}{status.error ? ` · ${status.error}` : ''}{status.migrated ? ` · ${t('migrated from localStorage')}: ${status.migrated}` : ''}
+          {Object.keys(view.fits).length} {t('fit(s)')} · {t(STORE_LABEL[status.kind] ?? status.kind)}{status.error ? ` · ${status.error}` : ''}{status.migrated ? ` · ${t('migrated from localStorage')}: ${status.migrated}` : ''}
         </span>
         <select className="lib-mode" value={mode} onChange={(e) => setMode(e.target.value as 'folder' | 'ship')} title={t('group by')}>
           <option value="folder">{t('by folder')}</option><option value="ship">{t('by ship group')}</option>
@@ -449,6 +536,20 @@ export function FitBrowser({ ds, lib, activeId, status, onOpen, onLib, onInfo, o
       <input className="search" placeholder={t('search fits / ships…')} value={q} onChange={(e) => setQ(e.target.value)} />
       {tags.length > 0 && <div className="chips lib-tags">{tags.map((x) => <button key={x} data-tag={x} className={x === tag ? 'on' : ''} onClick={() => setTag(x === tag ? '' : x)}>#{x}</button>)}</div>}
       <datalist id="lib-folders">{folders.map((p) => <option key={p} value={p} />)}</datalist>
+      <details className="lib-folder lib-groups" open={cfgGroups.length > 0 || undefined}>
+        <summary>{t('Groups')} <span className="muted">({cfgGroups.length})</span>
+          <span className="right"><button className="mini lib-group-new" title={t('New configuration group')} onClick={(e) => { e.preventDefault(); newGroup(); }}>+ {t('group')}</button></span>
+        </summary>
+        <ul className="fits">
+          {cfgGroups.map((g) => (
+            <li key={g.id} className="lib-fit lib-group" data-group-id={g.id} onClick={() => onOpenGroup(g.id)}
+              onContextMenu={(e) => { e.preventDefault(); setGroupmenu({ x: e.clientX, y: e.clientY, g }); }}>
+              <span className="lib-name"><span className="fleet-badge">▦</span> {g.name} <span className="muted">({g.actors.length} {t('actors')})</span></span>
+            </li>
+          ))}
+          {!cfgGroups.length && <li className="muted lib-group-empty">{t('No groups in this workspace.')}</li>}
+        </ul>
+      </details>
       {mode === 'folder' && !filtering ? (
         <div className="lib-tree">
           {tree.fleets.length + tree.fits.length + tree.children.length === 0 && <p className="muted">{t('Pick a ship in the Market tab to start a new fit.')}</p>}
@@ -470,7 +571,7 @@ export function FitBrowser({ ds, lib, activeId, status, onOpen, onLib, onInfo, o
           <details key={(mode === 'folder' || filtering ? 'd:' : 'g:') + key} open className={mode === 'folder' || filtering ? 'lib-folder' : 'lib-group'} data-folder={mode === 'folder' || filtering ? key : undefined}>
             <summary>{(mode === 'folder' || filtering) && folderRename === key
               ? <span className="folder-inline" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
-                  <InlineEdit autoEdit value={key} placeholder={t('Rename folder')} onCommit={(to) => { apply(renameFolder(lib, key, to)); setFolderRename(null); }} />
+                  <InlineEdit autoEdit value={key} placeholder={t('Rename folder')} onCommit={(to) => { apply(renameFolderWs(key, to)); setFolderRename(null); }} />
                 </span>
               : <>{(mode === 'folder' || filtering) && key.includes('/') && <span className="muted">{key.slice(0, key.lastIndexOf('/') + 1)}</span>}{(mode === 'folder' || filtering) && key.includes('/') ? key.slice(key.lastIndexOf('/') + 1) : label}</>} <span className="muted">({fs.length})</span>
               {(mode === 'folder' || filtering) && key && <span className="right">

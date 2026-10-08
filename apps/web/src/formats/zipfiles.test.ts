@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { emptyLibrary, newFit } from '../fit/model';
 import { mergeLibrary } from '../fit/library';
-import { docToFile, filesToLibrary, isZip, libraryToFiles, unzipFiles, zipLibrary } from './zipfiles';
+import { docToFile, filesToLibrary, isZip, libraryToFiles, splitPackages, unzipFiles, zipLibrary } from './zipfiles';
 
 const lib = () => {
   const a = { ...newFit(587, 'Brawler'), id: 'a', folder: 'PvP/Frigates', modified: '2026-06-01T00:00:00.000Z' };
@@ -29,12 +29,18 @@ describe('formats/zipfiles', () => {
     expect(m.added).toEqual([]);
     expect(m.skipped.sort()).toEqual(['a', 'b']);
   });
-  it('web.unit.zipfiles-docfile: a single document exports as <name>.<id>.exfa.json under its folder', () => {
-    const f = docToFile({ ...newFit(587, 'My Fit'), id: 'x9', folder: 'A/B' });
+  it('web.unit.zipfiles-docfile: a single document exports as an exfa/package@1 file under its folder', () => {
+    const l = { ...lib(), fits: { x9: { ...newFit(587, 'My Fit'), id: 'x9', folder: 'A/B' } } };
+    const f = docToFile(l, l.fits.x9);
     expect(f.path).toBe('A/B/My Fit.x9.exfa.json');
     const parsed = JSON.parse(f.text);
-    expect(parsed.format).toBe('exfa/fit@1');
-    expect(parsed.folder).toBeUndefined(); // folder lives in the path, not the document
-    expect(filesToLibrary([f]).fits.x9.folder).toBe('A/B');
+    expect(parsed.format).toBe('exfa/package@1');
+    expect(parsed.root).toEqual({ kind: 'fit', id: 'x9' });
+    expect(parsed.library.fits.x9.name).toBe('My Fit');
+    expect(parsed.library.fits.x9.folder).toBe('A/B');
+    // import side: splitPackages routes it through mergePackage, not fromFiles
+    const { packages, files } = splitPackages([f]);
+    expect(packages).toHaveLength(1);
+    expect(files).toHaveLength(0);
   });
 });

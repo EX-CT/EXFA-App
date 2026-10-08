@@ -71,8 +71,17 @@ export class CachingAdapter implements EngineAdapter {
     return { ...(await this.inner.meta()), mcp_cache: { size: this.m.size, max: this.max, hits: this.hits, misses: this.misses } };
   }
 
-  call<T = unknown>(method: string, params: unknown): Promise<T> {
-    return this.inner.call<T>(method, params);
+  /** docs/27 `compute` (operation "calc") shares the calc cache: same fit → same FitStats, so a hit answers with a
+   *  synthesized compute-result envelope. Every other method (incl. operation "batch") passes through. */
+  async call<T = unknown>(method: string, params: unknown): Promise<T> {
+    const p = params as { operation?: string; fit?: FitRequest } | null;
+    if (method !== "compute" || p?.operation !== "calc" || !p.fit || typeof p.fit !== "object") return this.inner.call<T>(method, params);
+    const k = this.key(p.fit);
+    const v = this.get(k);
+    if (v !== undefined && !isContractError(v)) return { format: "exfa/compute-result@1", operation: "calc", result: v } as T;
+    const env = await this.inner.call<{ operation?: string; result?: unknown }>(method, params);
+    if (env?.operation === "calc" && env.result !== undefined && !isContractError(env.result)) this.put(k, env.result as FitStats);
+    return env as T;
   }
 
   /** New price data changes results: the cache is dropped. */

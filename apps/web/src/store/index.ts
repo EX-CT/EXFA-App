@@ -13,6 +13,8 @@ export interface Settings {
   engine: EngineConfig;
   lang: 'en' | 'zh';
   activeFitId: string | null;
+  /** Active workspace id (docs/27 §5.4); the library view is filtered to it. */
+  activeWorkspace: string;
   dockHeight: number;
   dockCollapsed: boolean;
   infoHeight: number;
@@ -34,7 +36,7 @@ export function defaultEngineConfig(): EngineConfig {
 function initial(): AppState {
   const lib: Library = emptyLibrary();
   let settings: Settings = {
-    engine: defaultEngineConfig(), lang: 'en', activeFitId: null,
+    engine: defaultEngineConfig(), lang: 'en', activeFitId: null, activeWorkspace: 'default',
     dockHeight: 34, dockCollapsed: false, infoHeight: 190, infoCollapsed: false,
     marketMode: 'smart', metricPins: {},
   };
@@ -75,7 +77,8 @@ export function useAppState() {
       setState((s) => {
         const merged: Library = { ...s.lib, fits: { ...lib.fits, ...s.lib.fits }, characters: { ...s.lib.characters, ...lib.characters },
           damage_patterns: { ...s.lib.damage_patterns, ...lib.damage_patterns }, target_profiles: { ...s.lib.target_profiles, ...lib.target_profiles },
-          scenarios: { ...s.lib.scenarios, ...lib.scenarios }, fleets: { ...s.lib.fleets, ...lib.fleets }, folders: lib.folders };
+          scenarios: { ...s.lib.scenarios, ...lib.scenarios }, fleets: { ...s.lib.fleets, ...lib.fleets }, groups: { ...s.lib.groups, ...lib.groups },
+          folders: lib.folders, workspaces: lib.workspaces ?? (s.lib as { workspaces?: unknown }).workspaces, ws: { ...(s.lib as { ws?: Record<string, string> }).ws, ...lib.ws } } as Library;
         saved.current = { ...lib, fits: { ...lib.fits } };
         return { ...s, lib: merged };
       });
