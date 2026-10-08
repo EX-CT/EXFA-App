@@ -123,6 +123,39 @@ label.button { display: inline-flex; min-height: 20px; align-items: center; padd
 .graph-src { margin-left: auto; font-size: 12px; padding: 1px 6px; border-radius: 3px; border: 1px solid var(--mut); color: var(--mut); }
 .graph-src.engine { color: var(--ok); border-color: var(--ok); }
 
+/* Stage C: graph dock */
+.chart-wrap { position: relative; }
+svg.chart .crosshair { stroke: var(--acc2); stroke-width: 1; pointer-events: none; }
+svg.chart .legend-item { cursor: default; }
+svg.chart .legend-item.toggle { cursor: pointer; } svg.chart .legend-item[data-off] { opacity: .35; text-decoration: line-through; }
+.chart-tip { position: absolute; z-index: 5; min-width: 120px; max-width: 180px; background: var(--panel); border: 1px solid var(--line2); border-radius: 3px; padding: 3px 6px; font-size: 10px; pointer-events: none; box-shadow: 0 2px 8px rgba(0,0,0,.4); }
+.chart-tip .tip-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 4px; }
+.graphs .graph-y, .graphs .graph-fits { display: flex; flex-wrap: wrap; gap: 2px 10px; align-items: center; margin: 2px 0; font-size: 11px; }
+.graphs .ovfit { display: inline-flex; gap: 3px; align-items: center; white-space: nowrap; }
+.graphs details.graph-overlay, .graphs details.graph-scn { display: inline-block; position: relative; }
+.graphs details[open].graph-overlay > summary, .graphs details[open].graph-scn > summary { color: var(--acc); }
+.graphs details.graph-overlay > :not(summary), .graphs details.graph-scn > :not(summary) { display: inline-flex; gap: 3px; align-items: center; margin-left: 8px; }
+.graphs input.gx-min, .graphs input.gx-max { width: 56px; }
+
+/* Stage C: scenario editor + right-column scenarios */
+.profiles .scn-list { list-style: none; padding: 0; margin: 4px 0; }
+.profiles .scn { border: 1px solid var(--line); border-radius: 3px; margin: 3px 0; padding: 3px 6px; }
+.profiles .scn.open { border-color: var(--acc2); }
+.profiles .scn-row { display: flex; gap: 8px; align-items: baseline; }
+.profiles .scn-row .scn-name { cursor: pointer; font-weight: 600; }
+.profiles .scn-row .muted { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profiles .scn-edit { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 4px 0 2px; font-size: 11px; }
+.profiles .scn-edit label { display: inline-flex; gap: 4px; align-items: center; }
+.profiles .scn-edit input.qty { width: 56px; }
+.profiles .scn-inline, .profiles .scn-params, .profiles .scn-settings { display: flex; flex-wrap: wrap; gap: 4px 12px; flex-basis: 100%; }
+.scenarios h4 { margin: 6px 0 2px; }
+.scenarios .scn-check { list-style: none; padding: 0; margin: 0; }
+.scenarios .scn-check label { display: flex; gap: 5px; align-items: baseline; padding: 1px 0; }
+.scenarios .scn-check .scn-name { flex: 0 0 auto; }
+.scenarios .scn-dps { font-size: 10px; margin-left: auto; text-align: right; }
+.scenarios .scn-err { color: var(--bad); font-size: 10px; margin-left: auto; }
+.scenarios .scn-check li.on .scn-name { color: var(--acc); }
+
 /* compare / what-if */
 .cmp-pick { list-style: none; padding: 0; margin: 4px 0; max-height: 180px; overflow: auto; columns: 2; }
 td.best { color: var(--ok); font-weight: 600; } .delta { font-size: 10px; color: var(--mut); } .delta.up { color: var(--ok); } .delta.down { color: var(--bad); }

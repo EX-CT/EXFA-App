@@ -18,6 +18,7 @@ import { ItemInfo, Market, type InfoCtx } from './ui/Market';
 import { FitBrowser } from './ui/FitBrowser';
 import { PriceBox, type SnapshotState } from './ui/PriceBox';
 import { Profiles } from './ui/Profiles';
+import { Scenarios } from './ui/Scenarios';
 import { About, type BuildInfo } from './ui/About';
 import { Stats } from './ui/Stats';
 import { Popover, Tabs } from './ui/common';
@@ -515,7 +516,7 @@ export default function App() {
                   }}
                   onAddAlternative={addAlternativeOption} />
                   : dockTab === 'graphs' ? fit
-                    ? <Graphs st={stats} target={lib.target_profiles[fit.refs.target_profile_id]} engine={engineReady ? engineRef.current : null} request={request} engineReady={engineReady} lib={lib} fitId={fit.id} />
+                    ? <Graphs st={stats} engine={engineReady ? engineRef.current : null} request={request} engineReady={engineReady} lib={lib} fitId={fit.id} />
                     : <p className="muted">{t('No fit selected.')}</p>
                     : dockTab === 'compare' ? <Compare ds={ds} lib={lib} activeId={fit?.id ?? null} engine={engineReady ? engineRef.current : null} onOpen={(id) => { update((s) => ({ ...s, settings: { ...s.settings, activeFitId: id } })); setDockTab('strip'); }} />
                       : dockTab === 'import-export' ? <ImportExport ds={ds} fit={fit} lib={lib} stats={stats}
@@ -528,6 +529,7 @@ export default function App() {
       <aside className="right">{!ds ? <div className="skeleton-list"><i /><i /><i /><i /><i /><i /></div>
         : fit ? <>
           <Stats st={stats} busy={busy} ms={ms} error={calcErr} ds={ds} fit={fit} onWriteBack={writeBackAdjustments} />
+          <Scenarios lib={lib} fit={fit} stats={stats} onFit={setFit} />
           <PriceBox ds={ds} st={stats} settings={priceSet} onSettings={setPriceSet} snapshot={snapState} />
         </> : <p className="muted">{t('No fit selected')}</p>}</aside>
       </main>

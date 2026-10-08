@@ -520,20 +520,38 @@ const og = await p.waitForFunction(() => window.__lastGraph?.fits?.length === 2 
 const nLines = await p.evaluate(() => document.querySelectorAll('svg.chart polyline').length);
 check('web.e2e.graph-overlay: dps graph overlays a second fit', og && og.source === 'engine' && nLines >= 2, og ? `${og.source}: ${og.series.map((x) => x.name).join(', ')}` : 'no overlay');
 if (GRAPH_RPC) {
-  const mb = await p.evaluate(() => [...document.querySelector('.graphs select.graph-target').options].find((o) => o.text === 'Multi B')?.value);
-  await p.select('.graphs select.graph-target', mb);
-  const tg = await p.waitForFunction(() => window.__lastGraph?.target_fit === 'Multi B' && window.__lastGraph, { timeout: 60000 }).then((h) => h.jsonValue()).catch(() => null);
-  check('web.e2e.graph-target-fit: damage graph against a target fit (engine)', tg && tg.source === 'engine' && tg.series.length >= 2, tg ? tg.series.map((x) => `${x.name}:${x.n}`).join(' ') : 'none');
-  await p.select('.graphs select.graph-target', '');
+  // Stage C: graph targets come from library scenarios — create one aiming at the Multi B fit (Profiles tab),
+  // then enable it in the graph dock's scenario picker.
+  await clickText('.left .tabs button', 'Profiles');
+  await p.waitForSelector('.profiles .scn-add', { timeout: 15000 });
+  await p.click('.profiles .scn-add');
+  await p.waitForSelector('.scn-edit select', { timeout: 10000 });
+  await p.evaluate(() => {
+    const inp = document.querySelector('.scn-edit label input');
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    setter.call(inp, 'vs Multi B'); inp.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await p.select('.scn-edit label select', 'fit');
+  await p.waitForSelector('.scn-target', { timeout: 10000 });
+  const mb = await p.evaluate(() => [...document.querySelector('.scn-target').options].find((o) => o.text === 'Multi B')?.value);
+  await p.select('.scn-target', mb);
+  await clickText('.center .tabs button', 'Graphs');
+  await p.waitForSelector('.graphs select.graph-kind');
+  await p.evaluate(() => {
+    const d = document.querySelector('.graph-scn'); d.open = true;
+    [...d.querySelectorAll('label')].find((l) => l.textContent.includes('vs Multi B'))?.querySelector('input')?.click();
+  });
+  const tg = await p.waitForFunction(() => window.__lastGraph?.scenarios?.includes('vs Multi B') && window.__lastGraph.series?.length >= 2 && window.__lastGraph, { timeout: 60000 }).then((h) => h.jsonValue()).catch(() => null);
+  check('web.e2e.graph-target-fit: damage graph against a scenario target fit (engine)', tg && tg.source === 'engine', tg ? tg.series.map((x) => `${x.name}:${x.n}`).join(' ') : 'none');
   await p.evaluate(() => document.querySelector('.graph-overlay input[data-fit="Multi A"]').click());
   await p.select('.graphs select.graph-kind', 'ecm');
   const eg = await p.waitForFunction(() => window.__lastGraph?.kind === 'ecm' && window.__lastGraph.source === 'engine' && window.__lastGraph.fits?.length === 1 && window.__lastGraph, { timeout: 60000 }).then((h) => h.jsonValue()).catch(() => null);
   // enemy lock time at scan res 10 mm on the Rifter's signature (no damps): min(40000 / 10 / asinh(sig)^2, 1800)
   const sigR = s.navigation?.signature_radius, want = Math.min(40000 / 10 / Math.asinh(sigR) ** 2, 1800), got = eg?.series?.find((x) => x.name.startsWith('enemy lock time'))?.first;
   check('web.e2e.graph-ecm-burst: ECM burst graph (engine) matches the lock-time formula', got && Math.abs(got[1] - want) <= 1e-6 * want, `${got?.[1]} vs ${want}`);
-  await p.select('.graphs select.ecm-y', 'damage');
+  await p.evaluate(() => document.querySelector('.graph-y input[data-y="src_damage"]').click());
   const ed = await p.waitForFunction(() => window.__lastGraph?.kind === 'ecm' && window.__lastGraph.series?.some((x) => x.name.startsWith('damage dealt')) && window.__lastGraph, { timeout: 60000 }).then((h) => h.jsonValue()).catch(() => null);
-  check('web.e2e.graph-ecm-damage: ECM burst graph, damage dealt before dying', ed && ed.series[0].n > 10, ed ? `${ed.series[0].n} points` : 'none');
+  check('web.e2e.graph-ecm-damage: ECM burst graph, damage dealt before dying', ed && ed.series.some((x) => x.name.startsWith('damage dealt') && x.n > 10), ed ? `${ed.series.length} lines` : 'none');
 }
 // About is an anchored popover from the brand.
 await clickText('.brand', 'EXFA');

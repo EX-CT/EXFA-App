@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { t } from '../i18n';
 
 /** Item icon from CCP's image CDN (images.evetech.net, no auth). Ships/structures get the
@@ -111,28 +111,64 @@ export function Bar({ used, total, label }: { used: number; total: number; label
 }
 
 export interface ChartSeries { name: string; points: [number, number][]; dash?: string; color?: number }
-const COLORS = ['#d9a640', '#f2c96b', '#5fbf77', '#e5484d', '#7aa7d9', '#f0883e'];
+const COLORS = ['#d9a640', '#f2c96b', '#5fbf77', '#e5484d', '#7aa7d9', '#f0883e', '#b98fe0', '#7fd4c1'];
+export const chartColors = COLORS;
 
-export function LineChart({ series, xLabel, yLabel, height = 260 }: { series: ChartSeries[]; xLabel: string; yLabel: string; height?: number }) {
+export function LineChart({ series, xLabel, yLabel, height = 260, hidden, onToggleHidden }: {
+  series: ChartSeries[]; xLabel: string; yLabel: string; height?: number;
+  /** indices of legend-disabled series (kept in the legend, drawn dimmed) */
+  hidden?: ReadonlySet<number>; onToggleHidden?: (i: number) => void;
+}) {
   const W = 640, H = height, L = 56, B = 34, R = 12, T = 10;
-  const all = series.flatMap((s) => s.points);
-  if (!all.length) return <div className="muted">{t('No data for this graph.')}</div>;
-  const xmax = Math.max(...all.map((p) => p[0])) || 1, xmin = Math.min(0, ...all.map((p) => p[0]));
+  const [tip, setTip] = useState<{ px: number; py: number; x: number; items: { name: string; v: number; color: number }[] } | null>(null);
+  const vis = series.map((s, i) => ({ s, i })).filter(({ i }) => !hidden?.has(i));
+  const all = vis.flatMap(({ s }) => s.points);
+  if (!all.length && !series.length) return <div className="muted">{t('No data for this graph.')}</div>;
+  const xmax = Math.max(...all.map((p) => p[0]), 1e-9) || 1, xmin = Math.min(0, ...all.map((p) => p[0]));
   const ymax = Math.max(...all.map((p) => p[1]).filter(Number.isFinite)) * 1.05 || 1;
   const sx = (x: number) => L + ((x - xmin) / (xmax - xmin)) * (W - L - R);
   const sy = (y: number) => H - B - (Math.min(y, ymax) / ymax) * (H - B - T);
   const ticks = (max: number, min = 0) => Array.from({ length: 6 }, (_, i) => min + ((max - min) * i) / 5);
+  const onMove = (e: ReactMouseEvent<SVGSVGElement>) => {
+    const box = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
+    const vx = ((e.clientX - box.left) / box.width) * W;
+    if (vx < L || vx > W - R) { setTip(null); return; }
+    const x = xmin + ((vx - L) / (W - L - R)) * (xmax - xmin);
+    // nearest plotted x of each visible series (binary-free: data is sorted, points <= ~250)
+    const items = vis.flatMap(({ s, i }) => {
+      let best: [number, number] | null = null;
+      for (const p of s.points) if (Number.isFinite(p[1]) && (!best || Math.abs(p[0] - x) < Math.abs(best[0] - x))) best = p;
+      return best ? [{ name: s.name, v: best[1], color: s.color ?? i, x: best[0] }] : [];
+    });
+    if (!items.length) { setTip(null); return; }
+    const nx = items.reduce((a, b) => (Math.abs(b.x - x) < Math.abs(a.x - x) ? b : a)).x;
+    setTip({ px: sx(nx), py: Math.max(0, Math.min(H, items.reduce((m, it) => Math.max(m, sy(it.v)), 0))), x: nx, items });
+  };
   return (
-    <svg className="chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`${yLabel} vs ${xLabel}`}>
-      {ticks(ymax).map((y) => <g key={'y' + y}><line x1={L} x2={W - R} y1={sy(y)} y2={sy(y)} className="grid" /><text x={L - 4} y={sy(y) + 4} textAnchor="end">{fmt(y, ymax < 10 ? 2 : 0)}</text></g>)}
-      {ticks(xmax, xmin).map((x) => <g key={'x' + x}><line y1={T} y2={H - B} x1={sx(x)} x2={sx(x)} className="grid" /><text x={sx(x)} y={H - B + 14} textAnchor="middle">{fmt(x, xmax < 10 ? 1 : 0)}</text></g>)}
-      <text x={(W + L) / 2} y={H - 4} textAnchor="middle" className="axis">{xLabel}</text>
-      <text x={12} y={H / 2} textAnchor="middle" className="axis" transform={`rotate(-90 12 ${H / 2})`}>{yLabel}</text>
-      {series.map((s, i) => (
-        <polyline key={s.name} fill="none" stroke={COLORS[(s.color ?? i) % COLORS.length]} strokeWidth={2} strokeDasharray={s.dash}
-          points={s.points.filter((p) => Number.isFinite(p[1])).map((p) => `${sx(p[0]).toFixed(1)},${sy(p[1]).toFixed(1)}`).join(' ')} />
-      ))}
-      {series.map((s, i) => <text key={'l' + s.name} x={W - R - 4} y={T + 14 + i * 14} textAnchor="end" fill={COLORS[(s.color ?? i) % COLORS.length]}>{s.dash ? '┄ ' : ''}{seriesLabel(s.name)}</text>)}
-    </svg>
+    <div className="chart-wrap">
+      <svg className="chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`${yLabel} vs ${xLabel}`}
+        onMouseMove={onMove} onMouseLeave={() => setTip(null)}>
+        {ticks(ymax).map((y) => <g key={'y' + y}><line x1={L} x2={W - R} y1={sy(y)} y2={sy(y)} className="grid" /><text x={L - 4} y={sy(y) + 4} textAnchor="end">{fmt(y, ymax < 10 ? 2 : 0)}</text></g>)}
+        {ticks(xmax, xmin).map((x) => <g key={'x' + x}><line y1={T} y2={H - B} x1={sx(x)} x2={sx(x)} className="grid" /><text x={sx(x)} y={H - B + 14} textAnchor="middle">{fmt(x, xmax < 10 ? 1 : 0)}</text></g>)}
+        <text x={(W + L) / 2} y={H - 4} textAnchor="middle" className="axis">{xLabel}</text>
+        <text x={12} y={H / 2} textAnchor="middle" className="axis" transform={`rotate(-90 12 ${H / 2})`}>{yLabel}</text>
+        {series.map((s, i) => hidden?.has(i) ? null : (
+          <polyline key={s.name + i} fill="none" stroke={COLORS[(s.color ?? i) % COLORS.length]} strokeWidth={2} strokeDasharray={s.dash}
+            points={s.points.filter((p) => Number.isFinite(p[1])).map((p) => `${sx(p[0]).toFixed(1)},${sy(p[1]).toFixed(1)}`).join(' ')} />
+        ))}
+        {tip && <line className="crosshair" x1={tip.px} x2={tip.px} y1={T} y2={H - B} />}
+        {series.map((s, i) => (
+          <text key={'l' + s.name + i} className={'legend-item' + (onToggleHidden ? ' toggle' : '')} data-off={hidden?.has(i) || undefined}
+            x={W - R - 4} y={T + 14 + i * 14} textAnchor="end" fill={COLORS[(s.color ?? i) % COLORS.length]}
+            onClick={onToggleHidden ? () => onToggleHidden(i) : undefined}>{s.dash ? '┄ ' : ''}{seriesLabel(s.name)}</text>
+        ))}
+      </svg>
+      {tip && (
+        <div className="chart-tip" style={{ left: `min(${((tip.px + 8) / W) * 100}%, calc(100% - 180px))`, top: `${(tip.py / H) * 100}%` }}>
+          <div className="muted">x = {fmt(tip.x, tip.x < 10 ? 2 : 1)}</div>
+          {tip.items.map((it) => <div key={it.name}><span className="tip-dot" style={{ background: COLORS[it.color % COLORS.length] }} />{seriesLabel(it.name)}: <b>{fmt(it.v, 3)}</b></div>)}
+        </div>
+      )}
+    </div>
   );
 }
