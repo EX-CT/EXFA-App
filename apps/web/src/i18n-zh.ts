@@ -318,6 +318,7 @@ export const ZH: Record<string, string> = {
   'New workspace…': '新工作区…', 'Delete workspace': '删除工作区', 'Cannot delete the active workspace': '不能删除当前工作区',
   'Cannot delete the default workspace': '不能删除默认工作区', 'Workspace is not empty': '工作区非空（先移走其中的配置/配置组）',
   'Workspaces partition the library; fits and groups you create or import land in the active workspace.': '工作区把配置库分区；新建或导入的配置与配置组都进入当前工作区。',
+  'Load EXFA example workspace': '载入 EXFA 示例工作区',
   'Groups': '配置组', 'group': '配置组', 'group(s)': '个配置组', 'actors': '个角色',
   'No groups in this workspace.': '此工作区没有配置组。',
   'New configuration group': '新配置组', 'Delete this configuration group?': '删除此配置组？',
