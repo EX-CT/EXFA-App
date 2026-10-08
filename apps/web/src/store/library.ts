@@ -7,11 +7,16 @@
 // migrated likewise and a copy kept under eve-fit-web:v1:migrated.
 import { migrate, migrateFitDocument } from '@exfa/format';
 import type { Character, DamagePattern, FitDoc, Library, TargetProfile } from '../fit/model';
+import { ensureItemIds, type WorkspaceMeta } from '../fit/library';
 
 export const LEGACY_KEY = 'eve-fit-web:v1';
 const DB_NAME = 'eve-fit-web', DB_VERSION = 2;
-/** The part of the library that is not fit documents, stored as one kv entry ("index"). */
-export type LibraryIndex = Pick<Library, 'characters' | 'damage_patterns' | 'target_profiles' | 'scenarios' | 'fleets' | 'folders'>;
+/** The part of the library that is not fit documents, stored as one kv entry ("index"). `workspaces` is the
+ *  workspace registry and `ws` the entity→workspace tag map for non-documents (groups, fleets); both are
+ *  app-private fields inside the index JSON (docs carry their own tag on `doc.ui.ws`). */
+export type LibraryIndex = Pick<Library, 'characters' | 'damage_patterns' | 'target_profiles' | 'scenarios' | 'fleets' | 'groups' | 'folders'> & {
+  workspaces?: WorkspaceMeta[]; ws?: Record<string, string>;
+};
 export type StoredLibrary = LibraryIndex & { fits: Record<string, FitDoc> };
 
 export interface LibraryBackend {
@@ -24,10 +29,12 @@ export interface LibraryBackend {
 const req = <T>(r: IDBRequest<T>) => new Promise<T>((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
 const done = (tx: IDBTransaction) => new Promise<void>((res, rej) => { tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error ?? new Error('transaction aborted')); });
 
-const emptyIndex = (): LibraryIndex => ({ characters: {}, damage_patterns: {}, target_profiles: {}, scenarios: {}, fleets: {}, folders: [] });
+const emptyIndex = (): LibraryIndex => ({ characters: {}, damage_patterns: {}, target_profiles: {}, scenarios: {}, fleets: {}, groups: {}, folders: [], workspaces: [{ id: 'default', name: 'Default' }], ws: {} });
 const indexPart = (lib: StoredLibrary | Library): LibraryIndex => ({
   characters: userOnly(lib.characters ?? {}), damage_patterns: userOnly(lib.damage_patterns ?? {}), target_profiles: userOnly(lib.target_profiles ?? {}),
-  scenarios: userOnly(lib.scenarios ?? {}), fleets: lib.fleets ?? {}, folders: lib.folders ?? [],
+  scenarios: userOnly(lib.scenarios ?? {}), fleets: lib.fleets ?? {}, groups: lib.groups ?? {}, folders: lib.folders ?? [],
+  workspaces: (lib as { workspaces?: WorkspaceMeta[] }).workspaces ?? emptyIndex().workspaces,
+  ws: (lib as { ws?: Record<string, string> }).ws ?? {},
 });
 export async function indexedDbBackend(idb: IDBFactory = indexedDB, name = DB_NAME): Promise<LibraryBackend> {
   const open = idb.open(name, DB_VERSION);
@@ -97,7 +104,10 @@ export function localStorageBackend(storage: Storage = localStorage, key = 'eve-
         target_profiles: ((src.target_profiles ?? src.targetProfiles) ?? {}) as LibraryIndex['target_profiles'],
         scenarios: (src.scenarios ?? {}) as LibraryIndex['scenarios'],
         fleets: (src.fleets ?? {}) as LibraryIndex['fleets'],
+        groups: (src.groups ?? {}) as LibraryIndex['groups'],
         folders: Array.isArray(src.folders) ? src.folders as string[] : [],
+        workspaces: Array.isArray(src.workspaces) ? src.workspaces as WorkspaceMeta[] : emptyIndex().workspaces,
+        ws: (src.ws && typeof src.ws === 'object' ? src.ws : {}) as Record<string, string>,
       };
       if (src.format !== 'exfa/library@1' || Object.values(src.fits as Record<string, unknown> ?? {}).some((f) => (f as Record<string, unknown>)?.format !== 'exfa/fit@1')) persist();
       return cur;
@@ -133,7 +143,9 @@ export function storedPart(lib: Library): StoredLibrary {
   return {
     fits: lib.fits,
     characters: userOnly(lib.characters), damage_patterns: userOnly(lib.damage_patterns), target_profiles: userOnly(lib.target_profiles),
-    scenarios: userOnly(lib.scenarios ?? {}), fleets: lib.fleets ?? {}, folders: lib.folders ?? [],
+    scenarios: userOnly(lib.scenarios ?? {}), fleets: lib.fleets ?? {}, groups: lib.groups ?? {}, folders: lib.folders ?? [],
+    workspaces: (lib as { workspaces?: WorkspaceMeta[] }).workspaces ?? emptyIndex().workspaces,
+    ws: (lib as { ws?: Record<string, string> }).ws ?? {},
   };
 }
 
@@ -167,9 +179,18 @@ export async function openLibrary(legacyRaw: string | null = null): Promise<{ ba
         migrated = Object.keys(lib.fits).length;
       }
     } catch { /* no legacy library */ }
+    lib = { ...lib, fits: Object.fromEntries(Object.entries(lib.fits).map(([id, f]) => [id, ensureItemIds(f)])) };
     await backend.write(Object.values(lib.fits), [], indexPart(lib));
     // keep a copy of the migrated library; the legacy key itself now holds the settings only (store/index.ts)
     try { if (migrated && legacyRaw) localStorage.setItem(`${LEGACY_KEY}:migrated`, legacyRaw); } catch { /* quota */ }
+  } else {
+    // one-time normalization: documents stored before equipment ids existed get them now (persisted once)
+    const pairs = Object.entries(lib.fits).map(([id, f]) => [id, ensureItemIds(f)] as const);
+    const fixed = pairs.filter(([id, f]) => f !== lib!.fits[id]).map(([, f]) => f);
+    if (fixed.length) {
+      lib = { ...lib, fits: Object.fromEntries(pairs) };
+      await backend.write(fixed, [], null).catch(() => {});
+    }
   }
   return { backend, lib, migrated, note };
 }

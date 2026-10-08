@@ -24,7 +24,7 @@ export function applyEdits(ds: Dataset, doc: FitDoc, edits: Edit[]): FitDoc {
       case 'replace': {
         const m = fit.modules[e.index];
         const keep = m.charge_type_id != null && ds.chargesFor(e.type_id).includes(m.charge_type_id) ? m.charge_type_id : null;
-        fit.modules[e.index] = { type_id: e.type_id, slot: ds.slot(e.type_id) ?? m.slot, state: m.state === 'offline' ? 'offline' : defaultState(ds, e.type_id), charge_type_id: keep, mutation: null };
+        fit.modules[e.index] = { ...(m.id !== undefined ? { id: m.id } : {}), type_id: e.type_id, slot: ds.slot(e.type_id) ?? m.slot, state: m.state === 'offline' ? 'offline' : defaultState(ds, e.type_id), charge_type_id: keep, mutation: null };
         break;
       }
       case 'charge': {

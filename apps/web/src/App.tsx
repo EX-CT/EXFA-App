@@ -2,11 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import { loadSdePresets } from './data/sdePresets';
 import { setUiLang, t } from './i18n';
 import { Dataset } from './data/dataset';
-import { createEngine, enginePricesLoad, type Engine, type FitStats } from './engine/adapter';
+import { createEngine, engineCompute, enginePricesLoad, type Engine, type FitStats } from './engine/adapter';
 import { fetchLatestSnapshot, loadPriceSettings, savePriceSettings, PRICE_REFRESH_MS, SNAPSHOT_URL, type PriceSettings } from './data/prices';
 import { importFit, setEngineFormatsRpc } from './formats';
-import { addAlternative, recordHistory } from '@exfa/format';
+import { addAlternative, recordHistory, type JsonObject } from '@exfa/format';
 import { applyMarketPick, newFit, patchFit, requestFor, uid, type FitDoc, type Library, type MarketMode, type MarketSelection, type ModState } from './fit/model';
+import { setDocWs, workspacesOf } from './fit/library';
 import { useAppState } from './store';
 import { CharacterEditor } from './ui/Character';
 import { Fitting } from './ui/Fitting';
@@ -16,6 +17,7 @@ import { CompareStrip, type StripTab } from './ui/CompareStrip';
 import { ImportExport } from './ui/ImportExport';
 import { ItemInfo, Market, type InfoCtx } from './ui/Market';
 import { FitBrowser } from './ui/FitBrowser';
+import { Groups } from './ui/Groups';
 import { PriceBox, type SnapshotState } from './ui/PriceBox';
 import { Profiles } from './ui/Profiles';
 import { Scenarios } from './ui/Scenarios';
@@ -59,7 +61,8 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [ms, setMs] = useState<number | null>(null);
   const [left, setLeft] = useState<'market' | 'fits' | 'char' | 'profiles'>('market');
-  const [dockTab, setDockTab] = useState<'strip' | 'graphs' | 'compare' | 'import-export'>('strip');
+  const [dockTab, setDockTab] = useState<'strip' | 'graphs' | 'compare' | 'import-export' | 'groups'>('strip');
+  const [groupId, setGroupId] = useState<string | null>(null);
   const [stripTab, setStripTab] = useState<StripTab>('variations');
   const [sel, setSel] = useState<MarketSelection>(null);
   const [candidateId, setCandidateId] = useState<number | null>(null);
@@ -97,6 +100,9 @@ export default function App() {
   const injectedSnapId = useRef<string | null>(null);
   const { lib, settings } = state;
   const fit = settings.activeFitId ? lib.fits[settings.activeFitId] ?? null : null;
+  // Active workspace (docs/27 §5.4): falls back to 'default' when the saved id was deleted.
+  const wsId = workspacesOf(lib).some((w) => w.id === settings.activeWorkspace) ? settings.activeWorkspace : 'default';
+  const openGroup = (id: string) => { setGroupId(id); setDockTab('groups'); };
   useEffect(() => { setSel(null); setCandidateId(null); setStripTab('variations'); }, [fit?.id]);
 
   // Dataset and Engine initialize independently so the shell can report each startup phase.
@@ -177,7 +183,7 @@ export default function App() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [undoRedo, update]);
-  const addFit = useCallback((f: FitDoc) => { const now = new Date().toISOString(); f = { ...f, created: f.created ?? now, modified: f.modified ?? now }; update((s) => ({ ...s, lib: { ...s.lib, fits: { ...s.lib.fits, [f.id]: f } }, settings: { ...s.settings, activeFitId: f.id } })); }, [update]);
+  const addFit = useCallback((f: FitDoc) => { const now = new Date().toISOString(); f = { ...f, created: f.created ?? now, modified: f.modified ?? now }; update((s) => ({ ...s, lib: { ...s.lib, fits: { ...s.lib.fits, [f.id]: setDocWs(f, s.settings.activeWorkspace) } }, settings: { ...s.settings, activeFitId: f.id } })); }, [update]);
 
   // First visit / share link: format input is parsed by the Engine worker before the first calc.
   useEffect(() => {
@@ -222,10 +228,10 @@ export default function App() {
     const t = setTimeout(() => {
       setBusy(true);
       const t0 = performance.now();
-      engineRef.current!.calc(request).then((r) => {
+      engineCompute(engineRef.current!, { format: 'exfa/compute@1', operation: 'calc', fit: request as unknown as JsonObject }).then((r) => {
         if (my !== seq.current) return;
         const elapsed = performance.now() - t0;
-        setStats(r); setCalcErr(null); setMs(elapsed); setBusy(false);
+        setStats(r as FitStats); setCalcErr(null); setMs(elapsed); setBusy(false);
         if (!firstCalcSeen.current) { firstCalcSeen.current = true; setFirstCalcMs(elapsed); }
         (window as any).__lastStats = r; (window as any).__lastStatsFit = fitId; (window as any).__lastRequest = request;
       }, (e) => { if (my === seq.current) { setCalcErr(e.message); setBusy(false); } });
@@ -461,6 +467,7 @@ export default function App() {
           {!ds ? <div className="skeleton-list"><i /><i /><i /><i /><i /><i /><i /></div> : <>
           {left === 'market' && <Market ds={ds} engine={engineReady ? engineRef.current : null} onPick={pick} onPreview={previewPick} onInfo={setInfo} locate={locate} candidateId={candidateId} />}
           {left === 'fits' && <FitBrowser ds={ds} lib={lib} activeId={fit?.id ?? null} status={storeStatus}
+            wsId={wsId} onWs={(id) => update((s) => ({ ...s, settings: { ...s.settings, activeWorkspace: id } }))} onOpenGroup={openGroup}
             onOpen={(id) => update((s) => ({ ...s, settings: { ...s.settings, activeFitId: id } }))} onLib={setLib} onInfo={locateType} onSaveDoc={setFit} />}
           {left === 'char' && <CharacterEditor ds={ds} lib={lib} fit={fit} onLib={setLib} onFit={setFit} />}
           {left === 'profiles' && <Profiles lib={lib} fit={fit} onLib={setLib} onFit={setFit} />}
@@ -493,7 +500,7 @@ export default function App() {
             <div className="dock-head">
               <Tabs tabs={[
                 ['strip', t('Compare strip')], ['graphs', t('Graphs')], ['compare', t('Fit compare')],
-                ['import-export', t('Import-export')],
+                ['groups', t('Groups')], ['import-export', t('Import-export')],
               ]} value={dockTab} onChange={setDockTab} />
               <button className="mini dock-collapse" onClick={() => updateSettings({ dockCollapsed: !settings.dockCollapsed })} title={settings.dockCollapsed ? t('Expand dock') : t('Collapse dock')}>{settings.dockCollapsed ? '▴' : '▾'}</button>
             </div>
@@ -519,7 +526,9 @@ export default function App() {
                     ? <Graphs st={stats} engine={engineReady ? engineRef.current : null} request={request} engineReady={engineReady} lib={lib} fitId={fit.id} />
                     : <p className="muted">{t('No fit selected.')}</p>
                     : dockTab === 'compare' ? <Compare ds={ds} lib={lib} activeId={fit?.id ?? null} engine={engineReady ? engineRef.current : null} onOpen={(id) => { update((s) => ({ ...s, settings: { ...s.settings, activeFitId: id } })); setDockTab('strip'); }} />
-                      : dockTab === 'import-export' ? <ImportExport ds={ds} fit={fit} lib={lib} stats={stats}
+                      : dockTab === 'groups' ? <Groups ds={ds} lib={lib} groupId={groupId} wsId={wsId} engine={engineReady ? engineRef.current : null}
+                        onLib={setLib} onSelect={setGroupId} onOpenFit={(id) => update((s) => ({ ...s, settings: { ...s.settings, activeFitId: id } }))} />
+                        : dockTab === 'import-export' ? <ImportExport ds={ds} fit={fit} lib={lib} stats={stats} wsId={wsId}
                         calc={engineReady && engineRef.current ? (r) => engineRef.current!.calc(r) : null}
                         onImport={(f) => addFit(f)} onLib={setLib} />
                         : <p className="muted">{t('No fit selected.')}</p>}

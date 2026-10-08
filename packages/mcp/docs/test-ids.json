@@ -1,6 +1,6 @@
 {
  "schema": "mcp-test-ids/1",
- "format": "mcp.<file>.<slug>: <description>; file = unit|integration|features|adapters|stats|validation",
+ "format": "mcp.<file>.<slug>: <description>; file = unit|integration|features|adapters|stats|validation|compute",
  "base": "64d6cd6",
  "tests": [
   {
@@ -37,6 +37,56 @@
    "id": "mcp.adapters.streamable-http",
    "description": "Streamable HTTP transport",
    "file": "src/test/adapters.test.ts"
+  },
+  {
+   "id": "mcp.compute.calc-envelope",
+   "description": "a compute-capable engine answers the exfa/compute@1 envelope and stays on it",
+   "file": "src/test/compute.test.ts"
+  },
+  {
+   "id": "mcp.compute.calc-fallback-cached",
+   "description": "UNKNOWN_METHOD falls back to `calc`; `compute` is never retried",
+   "file": "src/test/compute.test.ts"
+  },
+  {
+   "id": "mcp.compute.envelope-unknown-method",
+   "description": "UNKNOWN_METHOD inside the result envelope also falls back",
+   "file": "src/test/compute.test.ts"
+  },
+  {
+   "id": "mcp.compute.errors-propagate",
+   "description": "a compute error that is not UNKNOWN_METHOD surfaces unchanged (no calc retry)",
+   "file": "src/test/compute.test.ts"
+  },
+  {
+   "id": "mcp.compute.envelope-error",
+   "description": "an error inside the result envelope becomes an EngineError",
+   "file": "src/test/compute.test.ts"
+  },
+  {
+   "id": "mcp.compute.malformed-envelope",
+   "description": "a non-envelope answer counts as 'no compute' and falls back",
+   "file": "src/test/compute.test.ts"
+  },
+  {
+   "id": "mcp.compute.batch-envelope",
+   "description": "operation \\",
+   "file": "src/test/compute.test.ts"
+  },
+  {
+   "id": "mcp.compute.batch-fallback",
+   "description": "no `compute` falls back to the legacy `batch` RPC, once",
+   "file": "src/test/compute.test.ts"
+  },
+  {
+   "id": "mcp.compute.neither-method",
+   "description": "an engine with neither `compute` nor `batch` reports UNKNOWN_METHOD for batches",
+   "file": "src/test/compute.test.ts"
+  },
+  {
+   "id": "mcp.compute.cache-shared",
+   "description": "compute/calc results share the CachingAdapter calc cache",
+   "file": "src/test/compute.test.ts"
   },
   {
    "id": "mcp.features.market-roots",
@@ -566,6 +616,16 @@
    "inventory": [
     "ENG-PROJ-002"
    ]
+  },
+  {
+   "id": "mcp.unit.violation-hints",
+   "description": "drone, fighter and cargo violations have fix hints",
+   "file": "src/test/unit.test.ts"
+  },
+  {
+   "id": "mcp.unit.graph-axis-preferences",
+   "description": "default axes are distance, time and target signature when supported",
+   "file": "src/test/unit.test.ts"
   },
   {
    "id": "mcp.unit.metrics-goal-score",

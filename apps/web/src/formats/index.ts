@@ -1,5 +1,6 @@
 // Format RPCs run through the same worker as calc and graph requests.
 import type { Dataset, Slot } from '../data/dataset';
+import { ensureItemIds } from '../fit/library';
 import { newFit, requestFor, uid, type Character, type DamagePattern, type FitDoc, type Library, type TargetProfile } from '../fit/model';
 import { requestToStructured } from './convert';
 import type { ExportFormat, ExportOptions, ImportFormat, StructuredFit, StructuredLibrary } from './types';
@@ -43,7 +44,7 @@ export function fitFromStructured(sf: StructuredFit, opts: { launchDrones?: bool
   f.boosters = sf.boosters.map((b) => ({ ...b }));
   f.cargo = sf.cargo.map((c) => ({ ...c }));
   if (sf.notes) doc.notes = sf.notes;
-  return doc;
+  return ensureItemIds(doc);
 }
 
 export interface ImportResult { kind: string; fits: FitDoc[]; warnings: string[] }

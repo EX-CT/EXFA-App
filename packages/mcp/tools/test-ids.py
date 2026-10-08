@@ -6,7 +6,7 @@ INVENTORY below or directly in test-ids.json (kept on regeneration)."""
 import json, re, pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-FILES = ["unit", "integration", "features", "adapters", "stats", "validation"]
+FILES = ["unit", "integration", "features", "adapters", "stats", "validation", "compute"]
 INVENTORY = {
     "mcp.stats.defense-values": ["ENG-DEF-001", "UI-STAT-RST"],
     "mcp.stats.capacitor-values": ["ENG-CAP-001", "ENG-CAP-002", "UI-STAT-CAP"],

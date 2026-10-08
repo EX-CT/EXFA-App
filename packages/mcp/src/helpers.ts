@@ -7,6 +7,7 @@ import { SLOTS } from "./dataset.js";
 import { defaultState } from "./dna.js";
 import { resolveModule, resolveQty, type Ctx } from "./fit.js";
 import { goalScore, metric, round, type Goal } from "./metrics.js";
+import { computeCalc } from "./compute.js";
 import { damageProfile, targetProfile } from "./profiles.js";
 
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v));
@@ -314,7 +315,7 @@ export interface OptimizeStep {
 export async function optimize(ctx: Ctx, base: FitRequest, goals: Goal[], constraints: any, budget: number, slots?: Slot[], lockIndices: number[] = [], onProgress?: (evaluated: number, message: string) => void) {
   const ds = ctx.ds;
   let req: any = clone(base);
-  const firstStats = await ctx.engine.calc(req);
+  const firstStats = await computeCalc(ctx.engine, req);
   let stats = firstStats;
   let evaluated = 1;
   const trace: OptimizeStep[] = [];
@@ -355,7 +356,7 @@ export async function optimize(ctx: Ctx, base: FitRequest, goals: Goal[], constr
     if (!moves.length) break;
     moves.sort((a, b) => b.score - a.score);
     const mv = moves[0];
-    const ns = await ctx.engine.calc(mv.req);
+    const ns = await computeCalc(ctx.engine, mv.req);
     evaluated++;
     if (goalScore(goals, ns, stats) <= 1e-9) break;
     req = mv.req;

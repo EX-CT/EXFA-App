@@ -1,7 +1,8 @@
 // File-level library transfer: format toFiles/fromFiles (library.exfa.json index + one .exfa.json document per fit,
 // folders mapped to directories) packed as a zip via fflate, or written to / read from a picked directory.
 import { strToU8, strFromU8, zipSync, unzipSync } from 'fflate';
-import { fromFiles, toFiles, type FormatFile } from '@exfa/format';
+import { fromFiles, packageFit, toFiles, type FormatFile, type Package } from '@exfa/format';
+import { normFolder, packageToFile } from '../fit/library';
 import type { FitDoc, Library } from '../fit/model';
 
 export const LIBRARY_ZIP_NAME = 'exfa-library.zip';
@@ -9,12 +10,25 @@ export const LIBRARY_ZIP_NAME = 'exfa-library.zip';
 /** Library -> format file set (index + documents under folder paths). */
 export const libraryToFiles = (lib: Library): FormatFile[] => toFiles(lib);
 
-/** Single document -> its `toFiles` entry (name used for downloads). */
-export function docToFile(doc: FitDoc): FormatFile {
-  const file = toFiles({ format: 'exfa/library@1', folders: [], fits: { [doc.id]: doc }, characters: {}, damage_patterns: {}, target_profiles: {}, scenarios: {}, fleets: {} })
-    .find((f) => f.path !== 'library.exfa.json');
-  if (!file) throw new Error('toFiles produced no document');
-  return file;
+/** Single document -> one .exfa.json carrying its dependency closure (exfa/package@1; docs/27 §5.4).
+ *  Kept under the fit's folder path like other toFiles documents. */
+export function docToFile(lib: Library, doc: FitDoc): FormatFile {
+  const file = packageToFile(packageFit(lib, doc), doc.name || 'fit');
+  const folder = normFolder(doc.folder);
+  return folder ? { ...file, path: `${folder}/${file.path}` } : file;
+}
+
+/** Splits a file set into exfa/package@1 documents and regular library files (for fromFiles). */
+export function splitPackages(files: FormatFile[]): { packages: Package[]; files: FormatFile[] } {
+  const packages: Package[] = [];
+  const rest: FormatFile[] = [];
+  for (const f of files) {
+    let parsed: Package | null = null;
+    if (f.path.endsWith('.json')) { try { parsed = JSON.parse(f.text) as Package; } catch { /* fromFiles reports it */ } }
+    if (parsed?.format === 'exfa/package@1' && parsed.library) packages.push(parsed);
+    else rest.push(f);
+  }
+  return { packages, files: rest };
 }
 
 /** Parse a `toFiles` set back into a library (folders come from the document paths). */

@@ -42,6 +42,34 @@ export function isContractError(v: unknown): v is ContractError {
   return !!v && typeof v === "object" && "error" in (v as object) && typeof (v as any).error === "object";
 }
 
+// ---- docs/27 §5 unified compute media ----
+// Every calculation is one `exfa/compute@1` request over the engine's `compute` RPC: operation "calc" carries a
+// FitRequest, operation "batch" carries a docs/23 BatchRequest. The answer is `exfa/compute-result@1`. Engines
+// predating it fall back to `calc` / the `batch` RPC — see compute.ts (capability probed once, then cached).
+
+export interface ComputeCalcRequest {
+  format: "exfa/compute@1";
+  operation: "calc";
+  fit: FitRequest;
+}
+
+export interface ComputeBatchRequest {
+  format: "exfa/compute@1";
+  operation: "batch";
+  /** docs/23 BatchRequest ({batch_version, fits | base + variants/product, fields, …}). */
+  batch: Record<string, unknown>;
+}
+
+export type ComputeRequest = ComputeCalcRequest | ComputeBatchRequest;
+
+/** `exfa/compute-result@1`: `result` (the FitStats for calc, the BatchResponse for batch) or a contract `error`. */
+export interface ComputeResult {
+  format?: string;
+  operation?: string;
+  result?: unknown;
+  error?: { code: string; message: string; path?: string; [k: string]: unknown };
+}
+
 export interface EngineAdapter {
   readonly kind: string;
   /** One FitRequest → FitStats. Contract errors are thrown as EngineError. */
@@ -53,8 +81,9 @@ export interface EngineAdapter {
   /** FitRequest → EFT text (engine `eft_export`). */
   eftExport(fit: FitRequest, name?: string): Promise<string>;
   meta(): Promise<EngineMeta>;
-  /** Any other serve-stdio / `POST /v1/rpc` method (e.g. `graph`, `graph_specs` per CONTRACT-GRAPHS 0.2). Contract
-   *  errors (`{error:{code,message,path}}`, or an unknown method) are thrown as EngineError. */
+  /** Any other serve-stdio / `POST /v1/rpc` method (e.g. `graph`, `graph_specs` per CONTRACT-GRAPHS 0.2, or
+   *  `compute` per docs/27). Contract errors (`{error:{code,message,path}}`, or an unknown method) are thrown as
+   *  EngineError. */
   call<T = unknown>(method: string, params: unknown): Promise<T>;
   /** docs/22 / docs/23 injected price file (the engine's `--prices FILE` / RPC `prices_load` layer, provenance
    *  `price_source: file`): load the eve-price-snapshot v1 (or plain map) at `path` into the engine, or clear it with

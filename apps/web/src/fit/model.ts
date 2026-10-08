@@ -10,6 +10,8 @@ import { defaultState } from './states';
 export type {
   FitRequest, FitDocument, Fit, Library, Character, DamagePattern, TargetProfile, FitModule, FitDrone,
   FitFighter, FitCargo, ProjectedItem, Mutation, ModState, Security, Fleet, Scenario, Alternative, Branch,
+  Group, GroupActor, GroupRelation, GroupRelationKind, Package, ComputeRequest, ComputeCalcRequest,
+  ComputeBatchRequest, ComputeResult,
 } from '@exfa/format';
 export type { Slot } from '@exfa/format';
 
@@ -36,7 +38,7 @@ export const draggedType = { id: null as number | null };
 export function emptyLibrary(): Library {
   return {
     format: 'exfa/library@1', folders: [], fits: {}, characters: {},
-    damage_patterns: {}, target_profiles: {}, scenarios: {}, fleets: {},
+    damage_patterns: {}, target_profiles: {}, scenarios: {}, fleets: {}, groups: {},
   };
 }
 
@@ -130,19 +132,19 @@ export function addItemToFit(ds: Dataset, doc: FitDoc, id: number, projected = f
       if (!slot) return null;
       let modules = fit.modules;
       if (slot === 'subsystem') { const sub = ds.attr(id, 'subSystemSlot'); modules = modules.filter((m) => m.slot !== 'subsystem' || ds.attr(m.type_id, 'subSystemSlot') !== sub); }
-      return patchFit(doc, { modules: [...modules, { type_id: id, slot, state: defaultState(ds, id), charge_type_id: null }] });
+      return patchFit(doc, { modules: [...modules, { id: uid(), type_id: id, slot, state: defaultState(ds, id), charge_type_id: null }] });
     }
     case 'charge': {
       const ok = fit.modules.map((m) => ds.chargesFor(m.type_id).includes(id));
       if (ok.some(Boolean)) return patchFit(doc, { modules: fit.modules.map((m, i) => (ok[i] ? { ...m, charge_type_id: id } : m)) });
-      return patchFit(doc, { cargo: [...fit.cargo, { type_id: id, quantity: 1 }] });
+      return patchFit(doc, { cargo: [...fit.cargo, { id: uid(), type_id: id, quantity: 1 }] });
     }
     case 'drone': {
       const ex = fit.drones.findIndex((d) => d.type_id === id);
       if (ex >= 0) return patchFit(doc, { drones: fit.drones.map((d, i) => (i === ex ? { ...d, quantity: d.quantity + 1, active: d.active + 1 } : d)) });
-      return patchFit(doc, { drones: [...fit.drones, { type_id: id, quantity: 1, active: 1 }] });
+      return patchFit(doc, { drones: [...fit.drones, { id: uid(), type_id: id, quantity: 1, active: 1 }] });
     }
-    case 'fighter': return patchFit(doc, { fighters: [...fit.fighters, { type_id: id, quantity: ds.attr(id, 'fighterSquadronMaxSize') ?? 1, active: true }] });
+    case 'fighter': return patchFit(doc, { fighters: [...fit.fighters, { id: uid(), type_id: id, quantity: ds.attr(id, 'fighterSquadronMaxSize') ?? 1, active: true }] });
     case 'implant': { const s = ds.attr(id, 'implantness'); return patchFit(doc, { implants: [...fit.implants.filter((x) => ds.attr(x, 'implantness') !== s), id] }); }
     case 'booster': { const s = ds.attr(id, 'boosterness'); return patchFit(doc, { boosters: [...fit.boosters.filter((b) => ds.attr(b.type_id, 'boosterness') !== s), { type_id: id }] }); }
     default: return null;

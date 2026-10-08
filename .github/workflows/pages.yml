@@ -1,5 +1,5 @@
 name: pages
-# Builds apps/web with the latest EX-CT/EXFA-Data dataset release and EXFA-Engine v0.2.1
+# Builds apps/web with the latest EX-CT/EXFA-Data dataset release and EXFA-Engine v0.2.2
 # (release downloads, no Rust builds), smoke-tests it in headless Chrome, runs the EXFA-Bench browser suites
 # against baselines/web.json, deploys to GitHub Pages.
 on:
@@ -68,10 +68,10 @@ jobs:
             echo "PRICES_SNAPSHOT=$PTAG" >> "$GITHUB_ENV"
             echo "price snapshot: $PTAG" >> "$GITHUB_STEP_SUMMARY"
           fi
-      - name: Engine WASM v0.2.1
+      - name: Engine WASM v0.2.2
         # The main WASM module handles calc, graph, price, and format RPCs.
         run: |
-          ETAG=v0.2.1
+          ETAG=v0.2.2
           mkdir -p public/engines/f dle
           gh release download "$ETAG" -R EX-CT/EXFA-Engine -D dle -p exfa_wasm.wasm -p SHA256SUMS
           (cd dle && sha256sum -c --ignore-missing SHA256SUMS)
