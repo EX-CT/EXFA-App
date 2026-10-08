@@ -5,7 +5,7 @@ Cross-repo status (Engine, Data, Bench, Format, known CI/deploy issues): EX-CT/E
 Source documents in this folder:
 
 - `design.md` — the approved v2 design (Chinese), incl. the 8 decisions the owner answered.
-- `app-v2-spec.md` — implementation spec for the App, stages A–D. Stage C is the section to finish next.
+- `app-v2-spec.md` — implementation spec for the App, stages A–D. All four stages are merged; see "Stage C notes".
 - `format-v1-spec.md` — EXFA-Format v1 spec (the repo EX-CT/EXFA-Format already implements it).
 
 ## Done (merged / released)
@@ -18,6 +18,7 @@ Source documents in this folder:
 | App Stage A: brand / logo / PWA, warm-black + gold theme, 3-column single-screen shell, bottom dock, toasts with undo, no native dialogs, WASM-only engine | EX-CT/EXFA-App PR #1 (squash `cfa5245`) |
 | App Stage B: compact market, Smart/Replace/Add modes, engine-backed compare strip | EX-CT/EXFA-App PR #2 (squash `8a6d84d`) |
 | App Stage D: fit library on `@exfa/format` (FitDocument / Library@1), IndexedDB v2, folder tree + fleets + branches/history, alternatives, `.exfa.json`/zip/folder import-export | EX-CT/EXFA-App PR #4 (squash `77e7ee6`) |
+| App Stage C: scenario editor + `scenario_results` in the right column; graph dock rebuilt on the engine graph RPC (all axes, fit×scenario lines, legend toggle, crosshair, CSV/PNG, ≤12 lines) | EX-CT/EXFA-App PR #5 (squash `1b208a7`) |
 
 ## Stage D notes (merged)
 
@@ -34,18 +35,33 @@ Source documents in this folder:
 - Browser smokes: `tools/smoke-d3.mjs` (tree/fleets/branches/history), `tools/smoke-d4.mjs` (alternatives/branch UI),
   `tools/smoke-d5.mjs` (exfa/zip import-export). All take `<url>` and `CHROME=`.
 - Verified: `tsc -b`, `vitest` 54/54, `vite build`, `e2e.mjs` 108/108, smokes 16/16.
+- Stage C verified: `vitest` 61/61, `smoke-c.mjs` 13/13, `e2e.mjs` 108/108, d3/d4/d5 smokes regression-green.
+
+## Stage C notes (merged)
+
+- Scenarios live in `Library.scenarios` and attach per fit via `doc.refs.scenario_ids` → `requestFor` emits
+  `scenarios[]` (top level only); stats expose `scenario_results[]` (`{id, dps, volley}` or `{id, error}`).
+  The right-column `Scenarios` section computes % of paper dps from `offense.total.dps.total`.
+- Builtin scenario `orbit-10k` ("Current target · 10 km orbit") is seeded in `initial()` and stripped by
+  `storedPart`/`indexPart` like the other builtins — never persisted.
+- Graph dock: every line is an engine `graph` RPC call — one per (fit, scenario, y). Scenario params supply
+  `target`/`params`/`settings` via format `scenarioRequest`; the swept axis **and its m/s↔% sibling** are removed
+  from params (the engine resolves the absolute unit over the percent regardless of axis). `ewar`/`remote_reps`
+  only offer fit-target scenarios (profile targets are ignored there). Requests are response-cached (`Map`,
+  96-entry cap); branches appear as separate fit entries; 12-line cap with an inline note.
+- Chart (`common.tsx` `LineChart`): clickable legend (`hidden` set of indices, dimmed strike-through), hover
+  crosshair + tooltip (`.chart-tip`), inline SVG styling so `svgToPng` can rasterize exports.
+- Browser smokes: `tools/smoke-c.mjs` covers the whole stage (13 checks). e2e target-fit and ecm-damage checks
+  now go through a scenario targeting a library fit instead of the removed `select.graph-target`.
 
 ## Known issues outside this branch
 
 - `CHROME` defaults to `/usr/bin/google-chrome` in all browser tools; point it at the local Chrome (Windows:
   `C:/Program Files/Google/Chrome/Application/chrome.exe`; Devin VM: `/home/ubuntu/.local/bin/google-chrome`).
 
-## Next stages (not started)
+## Next stages
 
-- Stage C — scenarios editor + graph dock: multi-fit × multi-target lines, all engine graph axes, legend toggle,
-  crosshair, CSV / PNG export, ≤ 12 lines (`app-v2-spec.md` → "Stage C"; uses `Library.scenarios` and
-  `doc.refs.scenario_ids` which the Stage-D model already persists).
-- Then docs / README refresh, deploy, final report.
+- `app-v2-spec.md` stages A–D are all merged. Remaining: docs / README refresh and the final report.
 
 ## Environment notes
 
