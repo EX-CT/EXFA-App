@@ -24,7 +24,9 @@ all computation runs locally in a Web Worker (Rust→WASM).
   the engine's `allowed_states` rule so illegal states can't even be requested.
 * **Everything computed by the engine**: offense/defense/capacitor/navigation/targeting stats,
   resource bars, drone bays, remote assistance, damage patterns and target profiles — with
-  interactive graphs (DPS vs range, capacitor vs time, …) straight from the engine's graph RPC.
+  scenarios (custom targets: range/speed/angle/sig + library-fit resists) and an engine-driven
+  graph dock (every axis the engine offers, multi-fit × multi-scenario lines, legend toggles,
+  crosshair, CSV/PNG export).
 * **Characters**: built-in all-0/all-5, manual sheets, alpha-clone caps, and **ESI sign-in**
   (EVE SSO v2 PKCE) to import trained skills and implants straight into the fit.
 * **Formats**: EFT / DNA / ESI-JSON / XML / eftcfg import (WASM formats engine, or a built-in
@@ -32,8 +34,9 @@ all computation runs locally in a Web Worker (Rust→WASM).
 * **Prices**: the engine embeds a snapshot at build time; the site re-fetches the newest
   EXFA-Data `prices-*` snapshot hourly and injects it into the live engine session (status shown
   in the price box). Local "my price" overrides on top.
-* **中文界面** toggle, mutaplasmid mutations, projected/fleet/environment effects, fit library
-  with folders + tags + backup/restore.
+* **中文界面** toggle, mutaplasmid mutations, projected/fleet/environment effects — and an
+  `@exfa/format` v1 library: nested folders, tags, fleets with roles, per-fit branches +
+  version history, module alternatives, `.exfa.json` / `.zip` / folder import & export.
 
 ## Components
 
