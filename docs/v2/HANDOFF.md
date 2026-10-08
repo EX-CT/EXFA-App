@@ -5,7 +5,7 @@ Cross-repo status (Engine, Data, Bench, Format, known CI/deploy issues): EX-CT/E
 Source documents in this folder:
 
 - `design.md` — the approved v2 design (Chinese), incl. the 8 decisions the owner answered.
-- `app-v2-spec.md` — implementation spec for the App, stages A–D. Stage B is the section to finish next.
+- `app-v2-spec.md` — implementation spec for the App, stages A–D. Stage C is the section to finish next.
 - `format-v1-spec.md` — EXFA-Format v1 spec (the repo EX-CT/EXFA-Format already implements it).
 
 ## Done (merged / released)
@@ -13,49 +13,27 @@ Source documents in this folder:
 | Piece | Where |
 |---|---|
 | Engine v0.2.0: `adjustments[]`, `scenarios` → `scenario_results`, attacker speed / angle graph axes, formats RPC in the main wasm (contract 1.5.0) | EX-CT/EXFA-Engine PR #6, release `v0.2.0` |
+| Engine v0.2.1: rebuilt on SDE 3586130 (embedded build now matches the UI dataset); SDE upgrades run via sde-update polling + bench gate | EX-CT/EXFA-Engine release `v0.2.1`, EXFA-Bench PR #5 |
 | EXFA-Format v1.0.0: JSON schemas, TS package, Rust crate, migrate + resolve, folder layout | EX-CT/EXFA-Format `main` |
 | App Stage A: brand / logo / PWA, warm-black + gold theme, 3-column single-screen shell, bottom dock, toasts with undo, no native dialogs, WASM-only engine | EX-CT/EXFA-App PR #1 (squash `cfa5245`) |
+| App Stage B: compact market, Smart/Replace/Add modes, engine-backed compare strip | EX-CT/EXFA-App PR #2 (squash `8a6d84d`) |
+| App Stage D: fit library on `@exfa/format` (FitDocument / Library@1), IndexedDB v2, folder tree + fleets + branches/history, alternatives, `.exfa.json`/zip/folder import-export | EX-CT/EXFA-App PR #4 (squash `77e7ee6`) |
 
-## In progress — Stage B (branch `devin/1791318840-v2-market`)
+## Stage D notes (merged)
 
-Implemented in this branch (spec: `app-v2-spec.md` → "Stage B"):
-
-- Compact market rows: 18px, 8px indent, 10px caret, group item counts, 16px icon, fixed 24px meta badge
-  (T2 / F / D / O / S / M<n>), slot letter only in search / "All", hover-only info button (`ui/Market.tsx`, `styles.css`).
-- Fit-item selection (`sel` state, gold left border) for modules / drones / fighters / cargo (`ui/Fitting.tsx`, `App.tsx`).
-- Operation modes Smart / Replace / Add in the header, Q / W / E shortcuts, persisted in settings (`store/index.ts`).
-- Market single-click = preview candidate, double-click / Enter = apply; drag-and-drop unchanged.
-- Pure `applyMarketPick(ds, fit, sel, typeId, mode)` in `fit/model.ts` + tests in `fit/model.market.test.ts`
-  (link-group replace, charge keep/load, offline kept, drone/fighter replace with quantity clamp, subsystem, ship = new fit).
-- Compare strip `ui/CompareStrip.tsx`: tabs Variations / Charges / Offline / Characters, every row computed by the engine
-  (150 ms debounce, request JSON as cache key, stale results dropped, ≤ 60 rows), CPU / PG / Cap delta + category metrics
-  + price, red frame for new violations, amber frame for new missing skills, tooltip with reasons, metric pinning per category.
-  New metrics in `fit/metrics.ts` (weapon range, tracking, module range, cap time, active tank, price).
-- What-if dock tab removed (its content now lives in the compare strip); module rows show `⇄n` to open Variations.
-- New zh strings in `i18n-zh.ts`; e2e scenarios added to `tools/e2e.mjs` (smart preview/replace, Ctrl+Z / Ctrl+Y, toast undo,
-  add mode, replace-without-selection warning, over-powergrid red frame).
-
-Verified at the time of this snapshot:
-
-- `npx tsc -b` passes, `npx vitest run` 48/48 passes, `npx vite build` passes.
-- `node tools/smoke.mjs <url> wasm-worker` passes (Rifter, engine 0.2.0).
-- `node tools/e2e.mjs http://127.0.0.1:4173/EXFA-App/ wasm-worker` passes 105/105 (headless Chrome on Windows and Linux).
-- Rendered review done (1920×1080 + 1600×900, `node tools/shots.mjs <url> <outdir>`): compact market with badges,
-  autocannon selected with Variations deltas, overpowered candidate red frame + tooltip, Afterburner selected + MWD
-  candidate (speed / sig / cap deltas), replace toast with Undo.
-
-Stage B bug fixes in the test tooling itself (the suite had never run to completion):
-
-- `page.dragAndDrop` was removed from puppeteer — the market drag now goes through `mouse.dragAndDrop` behind
-  `page.setDragInterception(true)` (required, or it waits on `Input.dragIntercepted` forever).
-- Playwright-style chords (`press('Control+a')`) replaced by `pressChord` (down/press/up).
-- Double-clicks used the removed `{ clickCount: 2 }` option — now `{ count: 2 }`.
-- The overfit-validation scenario applied market rows with a single click — now a double-click under Add mode.
-- Windows paths: `new URL(...).pathname` → `fileURLToPath` in `e2e.mjs` (fixtures) and `i18n.test.ts`.
-
-Still to do for Stage B:
-
-1. `git diff --check`, review, CI green, merge PR #2, Pages deploy.
+- App depends on `@exfa/format` via `github:EX-CT/EXFA-Format#v1.0.0` (git dep, `prepare` builds the ts package on install).
+- Internal model: `FitDoc` = `FitDocument`; every engine request goes through `requestFor(lib, doc)` → format `resolveFit`
+  (covers refs/links/fleets/scenarios). Never reintroduce the old flat fit fields.
+- IndexedDB `eve-fit-web` v2: `docs` store (FitDocument by id) + `kv.index`. v1 `fits`/`kv` and the old localStorage blob
+  migrate through `migrate()`/`migrateFitDocument` on first open and are left untouched as backups.
+- Merge rule everywhere (`.exfa.json`, `.zip`, folder, legacy backup, FitBrowser file import): same id → newer `modified` wins;
+  UI reports added / updated / skipped counts.
+- Zip/folder I/O in `formats/zipfiles.ts` (fflate; `toFiles` layout, `fromFiles` to rebuild). `showDirectoryPicker` buttons
+  are hidden when unsupported.
+- Dead `ui/WhatIf.tsx` removed; `fit/whatif.ts` stays (compare-strip scenario variants).
+- Browser smokes: `tools/smoke-d3.mjs` (tree/fleets/branches/history), `tools/smoke-d4.mjs` (alternatives/branch UI),
+  `tools/smoke-d5.mjs` (exfa/zip import-export). All take `<url>` and `CHROME=`.
+- Verified: `tsc -b`, `vitest` 54/54, `vite build`, `e2e.mjs` 108/108, smokes 16/16.
 
 ## Known issues outside this branch
 
@@ -64,10 +42,9 @@ Still to do for Stage B:
 
 ## Next stages (not started)
 
-- Stage D — library persisted as EXFA-Format (folders, alternatives, branches, history, fleets / command buffs, projected fits),
-  IndexedDB migration keeping the legacy `eve-fit-web*` stores, manual import / export of single fit, folder and zip.
 - Stage C — scenarios editor + graph dock: multi-fit × multi-target lines, all engine graph axes, legend toggle,
-  crosshair, CSV / PNG export, ≤ 12 lines.
+  crosshair, CSV / PNG export, ≤ 12 lines (`app-v2-spec.md` → "Stage C"; uses `Library.scenarios` and
+  `doc.refs.scenario_ids` which the Stage-D model already persists).
 - Then docs / README refresh, deploy, final report.
 
 ## Environment notes
