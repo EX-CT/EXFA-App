@@ -16,6 +16,7 @@ import {
 import { exportFits, importFits, libraryFromStructured } from '../formats';
 import { importPyfaDb, isSqlite } from '../formats/pyfadb';
 import { filesToLibrary, isZip, splitPackages, unzipFiles } from '../formats/zipfiles';
+import { seedDemoWorkspace } from '../data/demo';
 import { saveUserImplantSets, userImplantSets } from '../data/sdePresets';
 import type { StoreStatus } from '../store';
 import { FloatMenu, InlineEdit, Popover, TypeIcon } from './common';
@@ -524,6 +525,13 @@ export function FitBrowser({ ds, lib, activeId, status, wsId, onWs, onOpenGroup,
               <button disabled={!wsNew.trim()}>{t('Create')}</button>
             </form>
             <p className="muted small">{t('Workspaces partition the library; fits and groups you create or import land in the active workspace.')}</p>
+            <button className="mini lib-ws-demo" onClick={() => {
+              const seeded = seedDemoWorkspace(ds, libRef.current);
+              apply(seeded.lib);
+              setWsMenu(false);
+              onWs(seeded.ws);
+              if (seeded.groupId) onOpenGroup(seeded.groupId);
+            }}>{t('Load EXFA example workspace')}</button>
           </Popover>
         </div>
         <span className="lib-status muted small" data-kind={status.kind} data-fits={status.fits} data-saves={status.saves} title={status.note ?? status.error ?? ''}>
