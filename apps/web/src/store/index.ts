@@ -1,7 +1,7 @@
 // Client-side persistence: the fit library (fits, characters, profiles, folders) in IndexedDB (./library.ts), the
 // settings in localStorage. The engine itself is stateless.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { BUILTIN_CHARACTERS, BUILTIN_DAMAGE, BUILTIN_TARGETS } from '../data/presets';
+import { BUILTIN_CHARACTERS, BUILTIN_DAMAGE, BUILTIN_SCENARIOS, BUILTIN_TARGETS } from '../data/presets';
 import type { Library, MarketMode } from '../fit/model';
 import { emptyLibrary } from '../fit/model';
 import type { EngineConfig } from '../engine/adapter';
@@ -45,6 +45,7 @@ function initial(): AppState {
   for (const c of BUILTIN_CHARACTERS) lib.characters[c.id] = c;
   for (const d of BUILTIN_DAMAGE) lib.damage_patterns[d.id] = d;
   for (const t of BUILTIN_TARGETS) lib.target_profiles[t.id] = t;
+  for (const s of BUILTIN_SCENARIOS) lib.scenarios[s.id] = s;
   return { lib, settings };
 }
 

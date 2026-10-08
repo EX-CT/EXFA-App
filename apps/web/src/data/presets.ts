@@ -1,4 +1,4 @@
-import type { Character, DamagePattern, TargetProfile } from '../fit/model';
+import type { Character, DamagePattern, Scenario, TargetProfile } from '../fit/model';
 
 export const BUILTIN_CHARACTERS: Character[] = [
   { id: 'all5', name: 'All 5', default_level: 5, levels: {}, builtin: true },
@@ -22,4 +22,11 @@ export const BUILTIN_TARGETS: TargetProfile[] = [
   { id: 'cruiser', name: 'Cruiser (125 m, 250 m/s)', em: 0, thermal: 0, kinetic: 0, explosive: 0, signature_radius: 125, max_velocity: 250, radius: 150, builtin: true },
   { id: 'battleship', name: 'Battleship (400 m, 100 m/s)', em: 0, thermal: 0, kinetic: 0, explosive: 0, signature_radius: 400, max_velocity: 100, radius: 400, builtin: true },
   { id: 'uniform-50', name: 'Uniform 50% resists', em: 0.5, thermal: 0.5, kinetic: 0.5, explosive: 0.5, signature_radius: 125, max_velocity: 200, radius: 150, builtin: true },
+];
+
+// Built-in scenarios (like built-in profiles: always present, never persisted — storedPart strips `builtin`).
+export const BUILTIN_SCENARIOS: Scenario[] = [
+  { id: 'orbit-10k', name: 'Current target · 10 km orbit', builtin: true,
+    target: { profile_id: 'frigate' },
+    params: { distance_m: 10000, tgt_speed_pct: 100, tgt_angle_deg: 90, atk_speed_pct: 0 } },
 ];

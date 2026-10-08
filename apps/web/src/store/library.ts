@@ -26,8 +26,8 @@ const done = (tx: IDBTransaction) => new Promise<void>((res, rej) => { tx.oncomp
 
 const emptyIndex = (): LibraryIndex => ({ characters: {}, damage_patterns: {}, target_profiles: {}, scenarios: {}, fleets: {}, folders: [] });
 const indexPart = (lib: StoredLibrary | Library): LibraryIndex => ({
-  characters: lib.characters ?? {}, damage_patterns: lib.damage_patterns ?? {}, target_profiles: lib.target_profiles ?? {},
-  scenarios: lib.scenarios ?? {}, fleets: lib.fleets ?? {}, folders: lib.folders ?? [],
+  characters: userOnly(lib.characters ?? {}), damage_patterns: userOnly(lib.damage_patterns ?? {}), target_profiles: userOnly(lib.target_profiles ?? {}),
+  scenarios: userOnly(lib.scenarios ?? {}), fleets: lib.fleets ?? {}, folders: lib.folders ?? [],
 });
 export async function indexedDbBackend(idb: IDBFactory = indexedDB, name = DB_NAME): Promise<LibraryBackend> {
   const open = idb.open(name, DB_VERSION);
