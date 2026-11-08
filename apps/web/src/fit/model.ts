@@ -10,8 +10,7 @@ import { defaultState } from './states';
 export type {
   FitRequest, FitDocument, Fit, Library, Character, DamagePattern, TargetProfile, FitModule, FitDrone,
   FitFighter, FitCargo, ProjectedItem, Mutation, ModState, Security, Fleet, Scenario, Alternative, Branch,
-  Group, GroupActor, GroupRelation, GroupRelationKind, Package, ComputeRequest, ComputeCalcRequest,
-  ComputeBatchRequest, ComputeResult,
+  Group, GroupActor, GroupRelation, GroupRelationKind, Package, GroupBatchRequest, CompiledGroup,
 } from '@exfa/format';
 export type { Slot } from '@exfa/format';
 

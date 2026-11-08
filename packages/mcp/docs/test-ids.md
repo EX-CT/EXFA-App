@@ -1,7 +1,7 @@
 # Test ids
 
 Every `node --test` title in `src/test/*.test.ts` starts with a stable id, `mcp.<file>.<slug>: <description>`.
-`<file>` is one of `unit`, `integration`, `features`, `adapters`, `stats`, `validation`, `compute`, and `<slug>` is short kebab-case. For tests that existed at base
+`<file>` is one of `unit`, `integration`, `features`, `adapters`, `stats`, `validation`, and `<slug>` is short kebab-case. For tests that existed at base
 `64d6cd6` the description is the title they had before ids were introduced, so references by description still match.
 Cite tests by id (for example from EXFA-Bench `inventory/tests.yaml`). Ids never change when a description is reworded.
 `mcp.unit.test-ids` fails if a test has no id, names the wrong file, or reuses an id. Machine-readable list:
@@ -19,16 +19,6 @@ through `compute_fit detail:"full"`, case ids `mcp-bench.<suite>.<case>`, must m
 | `mcp.adapters.http-adapter-variant-c` | http adapter against variant C serve-http |  |
 | `mcp.adapters.bad-engine-binary` | bad engine binary gives an actionable error, not a hang |  |
 | `mcp.adapters.streamable-http` | Streamable HTTP transport |  |
-| `mcp.compute.calc-envelope` | a compute-capable engine answers the exfa/compute@1 envelope and stays on it |  |
-| `mcp.compute.calc-fallback-cached` | UNKNOWN_METHOD falls back to `calc`; `compute` is never retried |  |
-| `mcp.compute.envelope-unknown-method` | UNKNOWN_METHOD inside the result envelope also falls back |  |
-| `mcp.compute.errors-propagate` | a compute error that is not UNKNOWN_METHOD surfaces unchanged (no calc retry) |  |
-| `mcp.compute.envelope-error` | an error inside the result envelope becomes an EngineError |  |
-| `mcp.compute.malformed-envelope` | a non-envelope answer counts as 'no compute' and falls back |  |
-| `mcp.compute.batch-envelope` | operation \ |  |
-| `mcp.compute.batch-fallback` | no `compute` falls back to the legacy `batch` RPC, once |  |
-| `mcp.compute.neither-method` | an engine with neither `compute` nor `batch` reports UNKNOWN_METHOD for batches |  |
-| `mcp.compute.cache-shared` | compute/calc results share the CachingAdapter calc cache |  |
 | `mcp.features.market-roots` | roots and path resolution |  |
 | `mcp.features.market-meta-filter` | meta filter, depth, ambiguity |  |
 | `mcp.features.market-variations` | variations (meta family) |  |

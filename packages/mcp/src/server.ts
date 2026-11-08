@@ -3,7 +3,7 @@ import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mc
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { isContractError, type FitRequest, type FitStats } from "./adapters/types.js";
+import { isContractError, isUnknownMethod, type FitRequest, type FitStats } from "./adapters/types.js";
 import type { Dataset, Kind, Slot } from "./dataset.js";
 import { JARGON, KINDS, SLOTS, codedError } from "./dataset.js";
 import { exportDna, exportMultibuy } from "./dna.js";
@@ -21,7 +21,6 @@ import type { PricesLoadResult } from "./adapters/types.js";
 import { Change, Constraints, fitInputShape, FitInputObject, FitRequestLenient, GoalSpec, priceInputShape, z } from "./schemas.js";
 import { applyPriceInputs } from "./pricing-input.js";
 import { batchTable, prepareBatch } from "./batch.js";
-import { computeBatch, computeCalc, isUnknownMethod } from "./compute.js";
 import { markdownTable, pickSections, SECTIONS, summarize } from "./summary.js";
 
 export const VERSION = "0.4.2";
@@ -124,8 +123,7 @@ export function createServer(ctx: ServerDeps): McpServer {
 
   const norm = (a: FitInput) => normalizeFit(ctx, a);
   const prices = ctx.prices ?? new PriceService(priceConfig());
-  // single fits go through the docs/27 compute envelope when the engine has `compute`, else the `calc` method
-  const calc = (req: FitRequest) => computeCalc(ctx.engine, req);
+  const calc = (req: FitRequest) => ctx.engine.calc(req);
 
   // ---------------------------------------------------------------- catalogue
   server.registerTool(
@@ -379,8 +377,7 @@ export function createServer(ctx: ServerDeps): McpServer {
       const { request, notes } = await prepareBatch(ctx, a.request, a.skills);
       let resp: any;
       try {
-        // docs/27: the compute envelope (operation "batch") first; the docs/23 `batch` RPC on older engines
-        resp = await computeBatch(ctx.engine, request);
+        resp = await ctx.engine.call<Record<string, unknown>>("batch", request);
       } catch (e: any) {
         if (isUnknownMethod(e))
           throw Object.assign(new Error(`the engine has no \`batch\` method (docs/23); update EXFA-Engine (engine: ${(await ctx.engine.meta().catch(() => ({}) as any)).engine ?? "?"})`), { code: "UNKNOWN_METHOD" });

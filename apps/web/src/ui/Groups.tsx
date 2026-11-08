@@ -1,4 +1,4 @@
-// Configuration groups (docs/27 §7): actors + directed relations compile into one exfa/compute@1 batch
+// Configuration groups (docs/27 §7): actors + directed relations compile into one engine batch
 // via @exfa/format compileGroup. The engine stays workspace-agnostic — this panel owns the host side.
 import { useMemo, useRef, useState } from 'react';
 import { compileGroup, type Group, type GroupActor, type GroupRelation } from '@exfa/format';
@@ -9,7 +9,7 @@ import {
 } from '../fit/library';
 import { metric } from '../fit/metrics';
 import { fmt } from './common';
-import { engineCompute, type Engine, type EngineBatchResult, type FitStats } from '../engine/adapter';
+import { engineBatch, type Engine, type EngineBatchResult, type FitStats } from '../engine/adapter';
 import type { Dataset } from '../data/dataset';
 import { t } from '../i18n';
 import { notify } from './notify';
@@ -76,13 +76,14 @@ export function Groups({ ds, lib, groupId, wsId, engine, onLib, onSelect, onOpen
     setBusy(true);
     try {
       const { request, issues } = compileGroup(lib, group, {});
-      const n = (request.batch.fits as unknown[] | undefined)?.length ?? 0;
+      const n = request.fits.length;
       if (!n) {
         setRun({ at: Date.now(), issues: issues.length ? issues : [t('Add an actor with a fit first.')], res: null });
         notify({ kind: 'warn', text: t('Group has nothing to compute.') });
         return;
       }
-      const res = (await engineCompute(engine, request)) as EngineBatchResult;
+      const res = (await engineBatch(engine, request as unknown as Record<string, unknown>)) as EngineBatchResult | null;
+      if (!res) throw new Error('this engine has no batch method');
       if (gen.current === my) setRun({ at: Date.now(), issues, res });
     } catch (e) {
       if (gen.current === my) setRun({ at: Date.now(), issues: [(e as Error).message], res: null });
