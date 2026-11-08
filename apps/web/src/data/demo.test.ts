@@ -12,9 +12,8 @@ type BatchEntry = { id: string; label?: string; fit: { projected?: { kind: strin
 const batchOf = (lib: Library, groupId: string): BatchEntry[] => {
   const { request, issues } = compileGroup(lib, lib.groups![groupId], {});
   expect(issues).toEqual([]);
-  expect(request.format).toBe('exfa/compute@1');
-  expect(request.operation).toBe('batch');
-  return (request.batch as { fits: BatchEntry[] }).fits;
+  expect(request.batch_version).toBe(1);
+  return request.fits as unknown as BatchEntry[];
 };
 
 describe('data/demo', () => {

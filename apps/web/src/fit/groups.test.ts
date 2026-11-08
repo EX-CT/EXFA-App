@@ -1,4 +1,4 @@
-// docs/27 §7: configuration groups (compileGroup into exfa/compute@1 batch), §5.4 workspaces (doc.ui.ws +
+// docs/27 §7: configuration groups (compileGroup into one engine batch request), §5.4 workspaces (doc.ui.ws +
 // index ws map) and package import (mergePackage into the active workspace).
 import { describe, expect, it } from 'vitest';
 import { compileGroup, packageFit, type Group } from '@exfa/format';
@@ -52,9 +52,8 @@ describe('fit/library groups', () => {
     const [a1, a2] = l.groups.g1.actors;
     l = upsertGroupRelation(l, 'g1', { id: 'r1', kind: 'command', source: a1.id, targets: [a2.id], enabled: true });
     const { request, issues } = compileGroup(l, l.groups.g1, {});
-    expect(request.format).toBe('exfa/compute@1');
-    expect(request.operation).toBe('batch');
-    const batch = request.batch as { fits: { id: string; fit: { ship: { type_id: number }; fleet?: { booster_fits?: unknown[] } } }[] };
+    expect(request.batch_version).toBe(1);
+    const batch = request as unknown as { fits: { id: string; fit: { ship: { type_id: number }; fleet?: { booster_fits?: unknown[] } } }[] };
     expect(batch.fits.map((f) => f.id)).toEqual([a1.id, a2.id]);
     expect(batch.fits[1].fit.fleet?.booster_fits).toHaveLength(1); // command edge: a1 boosts a2
     expect(issues.some((s) => s.includes('missing-fit'))).toBe(true);

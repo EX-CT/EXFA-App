@@ -2,10 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import { loadSdePresets } from './data/sdePresets';
 import { setUiLang, t } from './i18n';
 import { Dataset } from './data/dataset';
-import { createEngine, engineCompute, enginePricesLoad, type Engine, type FitStats } from './engine/adapter';
+import { createEngine, enginePricesLoad, type Engine, type FitStats } from './engine/adapter';
 import { fetchLatestSnapshot, loadPriceSettings, savePriceSettings, PRICE_REFRESH_MS, SNAPSHOT_URL, type PriceSettings } from './data/prices';
 import { importFit, setEngineFormatsRpc } from './formats';
-import { addAlternative, recordHistory, type JsonObject } from '@exfa/format';
+import { addAlternative, recordHistory } from '@exfa/format';
 import { applyMarketPick, newFit, patchFit, requestFor, uid, type FitDoc, type Library, type MarketMode, type MarketSelection, type ModState } from './fit/model';
 import { setDocWs, workspacesOf } from './fit/library';
 import { useAppState } from './store';
@@ -228,7 +228,7 @@ export default function App() {
     const t = setTimeout(() => {
       setBusy(true);
       const t0 = performance.now();
-      engineCompute(engineRef.current!, { format: 'exfa/compute@1', operation: 'calc', fit: request as unknown as JsonObject }).then((r) => {
+      Promise.resolve(engineRef.current!.calc(request)).then((r) => {
         if (my !== seq.current) return;
         const elapsed = performance.now() - t0;
         setStats(r as FitStats); setCalcErr(null); setMs(elapsed); setBusy(false);
